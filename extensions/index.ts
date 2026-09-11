@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { awakeController } from "./awake.ts";
 import { CustomStatusBar } from "./status-bar.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -7,16 +8,42 @@ export default function (pi: ExtensionAPI) {
 
   // Announce extension and attach status bar on session start
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("pi-ter extension & custom status bar loaded", "info");
+    ctx.ui.notify("pi-ter extension loaded: custom status bar & ON FIRE mode ready", "info");
     statusBar.attach(ctx);
   });
 
-  // Re-render status bar when model changes
-  pi.on("model_select", async (_event, _ctx) => {
-    // Model change triggers auto re-render in TUI
+  // Keep computer awake while Pi is actively thinking, tool-calling, or streaming
+  pi.on("turn_start", async (_event, _ctx) => {
+    awakeController.setBusy(true);
+    statusBar.requestRender();
   });
 
-  // Register command to toggle custom status bar
+  pi.on("turn_end", async (_event, _ctx) => {
+    awakeController.setBusy(false);
+    void statusBar.refreshGitStatus();
+    statusBar.requestRender();
+  });
+
+  // Ensure sleep locks are released when session ends
+  pi.on("session_end", async (_event, _ctx) => {
+    awakeController.dispose();
+  });
+
+  // Command to toggle ON FIRE mode (keep computer awake continuously)
+  pi.registerCommand("fire", {
+    description: "Toggle ON FIRE mode (prevents computer from sleeping)",
+    handler: async (_args, ctx) => {
+      const active = awakeController.toggleOnFire();
+      statusBar.requestRender();
+      if (active) {
+        ctx.ui.notify("🔥 ON FIRE mode ACTIVATED: Sleep prevented while active!", "info");
+      } else {
+        ctx.ui.notify("❄️ ON FIRE mode DEACTIVATED: Normal sleep restored.", "info");
+      }
+    },
+  });
+
+  // Command to toggle custom powerline status bar
   pi.registerCommand("statusbar", {
     description: "Toggle custom powerline status bar (on/off)",
     handler: async (_args, ctx) => {
@@ -34,13 +61,19 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("pi-ter: pong!", "info");
         return;
       }
+      if (subcommand === "fire") {
+        const active = awakeController.toggleOnFire();
+        statusBar.requestRender();
+        ctx.ui.notify(`🔥 ON FIRE mode: ${active ? "ON (awake lock active)" : "OFF"}`, "info");
+        return;
+      }
       if (subcommand === "statusbar") {
         const active = statusBar.toggle(ctx);
         ctx.ui.notify(`Custom status bar: ${active ? "enabled" : "disabled"}`, "info");
         return;
       }
       ctx.ui.notify(
-        `pi-ter is active. Subcommands: ping, statusbar (current: ${statusBar.isEnabled() ? "on" : "off"})`,
+        `pi-ter is active. Subcommands: fire (current: ${awakeController.isOnFire() ? "ON" : "OFF"}), statusbar (current: ${statusBar.isEnabled() ? "on" : "off"}), ping`,
         "info",
       );
     },
@@ -62,7 +95,11 @@ export default function (pi: ExtensionAPI) {
             text: `[pi-ter] Inspection topic: ${params.topic} - ready for experimentation.`,
           },
         ],
-        details: { topic: params.topic, timestamp: new Date().toISOString() },
+        details: {
+          topic: params.topic,
+          onFire: awakeController.isOnFire(),
+          timestamp: new Date().toISOString(),
+        },
       };
     },
   });

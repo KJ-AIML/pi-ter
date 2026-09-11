@@ -2,19 +2,19 @@
  * Custom Status Bar for Pi
  *
  * Implements a powerline-style status bar in Pi's footer matching the reference design:
- * 🔖 › 🌸 Model + Thinking › 📁 Folder › ᚸ Branch + Changes › ⏱ Token/Context › 📦 Cache % › Agents: N › ❤️ YOLO
+ * 🔖 › 🌸 Model + Thinking › 📁 Folder › ᚸ Branch + Changes › ⏱ Token/Context › 📦 Cache % › Agents: N › 🔥 ON FIRE / ❤️ YOLO / 🛡️ STRICT
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { basename } from "node:path";
+import { awakeController } from "./awake.ts";
 
 // Truecolor ANSI color helpers matching the reference palette
 const colors = {
   reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  // Hex to truecolor foreground
+  bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
+  dim: (text: string) => `\x1b[2m${text}\x1b[22m`,
   hex: (hexStr: string, text: string) => {
     const num = parseInt(hexStr.replace("#", ""), 16);
     const r = (num >> 16) & 255;
@@ -35,6 +35,7 @@ const PALETTE = {
   tokens: "#f8f8f2",    // Bright White
   cache: "#bd93f9",     // Lavender / Purple
   agents: "#e2e8f0",    // Off-white
+  onFire: "#ff4500",    // Fiery Orange-Red
   yolo: "#ff5555",      // Coral Red
   strict: "#10b981",    // Emerald Green
 };
@@ -56,15 +57,13 @@ function formatTokens(count: number): string {
 
 export interface StatusBarOptions {
   enabled?: boolean;
-  glyphSeparator?: string;
-  showAgents?: boolean;
-  showYolo?: boolean;
 }
 
 export class CustomStatusBar {
   private pi: ExtensionAPI;
   private enabled = true;
   private gitChangedCount = 0;
+  private gitBranchFallback = "";
   private lastGitCheck = 0;
   private currentTui: any = null;
 
@@ -76,24 +75,38 @@ export class CustomStatusBar {
   }
 
   /**
-   * Periodically check git dirty/changed files without blocking render
+   * Check git dirty/changed files and branch (with target fallback)
    */
-  private async refreshGitStatus(): Promise<void> {
+  public async refreshGitStatus(): Promise<void> {
     const now = Date.now();
-    // Cache git status for 3 seconds
-    if (now - this.lastGitCheck < 3000) return;
+    // Cache git status for 2.5 seconds
+    if (now - this.lastGitCheck < 2500) return;
     this.lastGitCheck = now;
 
     try {
+      // 1. Try local git in cwd
       const res = await this.pi.exec("git", ["status", "--porcelain"], { timeout: 2000 });
       if (res && res.code === 0 && typeof res.stdout === "string") {
         const lines = res.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
         this.gitChangedCount = lines.length;
+        const bRes = await this.pi.exec("git", ["branch", "--show-current"], { timeout: 1500 });
+        if (bRes && bRes.code === 0 && bRes.stdout.trim()) {
+          this.gitBranchFallback = bRes.stdout.trim();
+        }
       } else {
-        this.gitChangedCount = 0;
+        // 2. Fallback to target repo under repos/pi-ter
+        const targetRes = await this.pi.exec("git", ["-C", "repos/pi-ter", "status", "--porcelain"], { timeout: 2000 });
+        if (targetRes && targetRes.code === 0 && typeof targetRes.stdout === "string") {
+          const lines = targetRes.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
+          this.gitChangedCount = lines.length;
+          const targetBranch = await this.pi.exec("git", ["-C", "repos/pi-ter", "branch", "--show-current"], { timeout: 1500 });
+          if (targetBranch && targetBranch.code === 0 && targetBranch.stdout.trim()) {
+            this.gitBranchFallback = targetBranch.stdout.trim();
+          }
+        }
       }
     } catch {
-      this.gitChangedCount = 0;
+      // ignore
     }
 
     if (this.currentTui) {
@@ -107,7 +120,6 @@ export class CustomStatusBar {
   public attach(ctx: ExtensionContext): void {
     if (!ctx.hasUI || ctx.mode !== "tui") return;
 
-    // Refresh git status initially
     void this.refreshGitStatus();
 
     ctx.ui.setFooter((tui, _theme, footerData) => {
@@ -134,13 +146,20 @@ export class CustomStatusBar {
   }
 
   /**
+   * Request TUI to re-render status bar
+   */
+  public requestRender(): void {
+    if (this.currentTui) {
+      this.currentTui.requestRender();
+    }
+  }
+
+  /**
    * Toggle between custom status bar and default footer
    */
   public toggle(ctx: ExtensionContext): boolean {
     this.enabled = !this.enabled;
-    if (this.currentTui) {
-      this.currentTui.requestRender();
-    }
+    this.requestRender();
     return this.enabled;
   }
 
@@ -167,7 +186,10 @@ export class CustomStatusBar {
     const segFolder = colors.hex(PALETTE.folder, `📁 ${folderName}`);
 
     // 4. Git Branch + Change count Segment (e.g. ᚸ main 72)
-    const branch = footerData.getGitBranch() || "no-git";
+    const rawBranch = footerData.getGitBranch();
+    const branch = rawBranch && rawBranch !== "no-git"
+      ? rawBranch
+      : (this.gitBranchFallback || "no-git");
     const branchText = colors.hex(PALETTE.branch, `ᚸ ${branch}`);
     const changeCountText = this.gitChangedCount > 0
       ? ` ${colors.hex(PALETTE.gitCount, String(this.gitChangedCount))}`
@@ -208,11 +230,15 @@ export class CustomStatusBar {
     // 7. Agents Count Segment (e.g. Agents: 1)
     const segAgents = colors.hex(PALETTE.agents, "Agents: 1");
 
-    // 8. YOLO / Safety Mode Segment (e.g. ❤️ YOLO)
-    const isYolo = process.env.HELI_YOLO === "1" || process.env.PI_YOLO === "1";
-    const segYolo = isYolo
-      ? colors.hex(PALETTE.yolo, "❤️ YOLO")
-      : colors.hex(PALETTE.strict, "🛡️ STRICT");
+    // 8. Mode Segment: ON FIRE (awake lock) vs YOLO vs STRICT
+    let segMode: string;
+    if (awakeController.isOnFire()) {
+      segMode = colors.bold(colors.hex(PALETTE.onFire, "🔥 ON FIRE"));
+    } else if (process.env.HELI_YOLO === "1" || process.env.PI_YOLO === "1") {
+      segMode = colors.hex(PALETTE.yolo, "❤️ YOLO");
+    } else {
+      segMode = colors.hex(PALETTE.strict, "🛡️ STRICT");
+    }
 
     // Build segments list in order
     const allSegments = [
@@ -223,36 +249,34 @@ export class CustomStatusBar {
       segTokens,
       segCache,
       segAgents,
-      segYolo,
+      segMode,
     ];
 
-    // Check if everything fits; if not, progressively drop less critical segments
+    // Responsive truncation
     let segments = [...allSegments];
     let fullLine = segments.join(SEP);
 
     if (visibleWidth(fullLine) > width) {
-      // Step 1: Drop Agents count
-      segments = [segBookmark, segModel, segFolder, segGit, segTokens, segCache, segYolo];
+      // Drop Agents count
+      segments = [segBookmark, segModel, segFolder, segGit, segTokens, segCache, segMode];
       fullLine = segments.join(SEP);
     }
     if (visibleWidth(fullLine) > width) {
-      // Step 2: Drop Cache %
-      segments = [segBookmark, segModel, segFolder, segGit, segTokens, segYolo];
+      // Drop Cache %
+      segments = [segBookmark, segModel, segFolder, segGit, segTokens, segMode];
       fullLine = segments.join(SEP);
     }
     if (visibleWidth(fullLine) > width) {
-      // Step 3: Drop YOLO tag
-      segments = [segBookmark, segModel, segFolder, segGit, segTokens];
+      // Drop Tokens
+      segments = [segBookmark, segModel, segFolder, segGit, segMode];
       fullLine = segments.join(SEP);
     }
     if (visibleWidth(fullLine) > width) {
-      // Step 4: Drop Tokens
-      segments = [segBookmark, segModel, segFolder, segGit];
+      // Minimal: Bookmark, Model, Folder, Mode
+      segments = [segBookmark, segModel, segFolder, segMode];
       fullLine = segments.join(SEP);
     }
 
-    // Final safety truncate to width so it never breaks terminal boundary
-    const outputLine = truncateToWidth(fullLine, width, "");
-    return [outputLine];
+    return [truncateToWidth(fullLine, width, "")];
   }
 }
