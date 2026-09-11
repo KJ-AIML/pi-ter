@@ -1,0 +1,26 @@
+{
+  "name": "pi-ter",
+  "version": "0.1.0",
+  "description": "Pi experimentation plugin package for custom extensions, skills, and prompts",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "main": "extensions/index.ts",
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
