@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Pi-ter Launcher with Instant ASCII Flame Animation
+    Pi-ter Launcher with "The Creation of Adam" ASCII Animation (Hello PI)
 .DESCRIPTION
     Launches Pi with the pi-ter extension package, displaying an instant ASCII
-    flame animation during the startup loading gap.
+    animation of both hands reaching to the center and revealing "Hello PI".
 #>
 
 [CmdletBinding()]
@@ -26,127 +26,120 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $repoDir   = Resolve-Path (Join-Path $scriptDir "..")
 
 if (-not $isNonInteractive) {
-    # Set UTF-8 encoding
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
-    $esc = [char]27
-    $cReset  = "$esc[0m"
-    $cBold   = "$esc[1m"
-    $cDim    = "$esc[2m"
-    $cYellow = "$esc[38;2;254;240;138m" # #fef08a
-    $cOrange = "$esc[38;2;255;112;67m"  # #ff7043
-    $cRed    = "$esc[38;2;239;68;68m"   # #ef4444
-    $cCyan   = "$esc[38;2;45;212;191m"  # #2dd4bf
-    $cPink   = "$esc[38;2;244;114;182m" # #f472b6
 
     $origCursor = $true
     try { $origCursor = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch {}
 
-    $frameFlame = @(
-        # Frame 0: Spark
+    $frames = @(
         @(
-            "                      .                       ",
-            "                     ( )                      ",
-            "                      .                       "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m.      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m            :  .                                             :.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                           :=-=######*++=+=++=*=\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                              #++-+===--::..::::\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                               ::-.\u001b[0m",
+            "",
+            ""
         ),
-        # Frame 1: Small ember
         @(
-            "                    (   )                     ",
-            "                   (  .  )                    ",
-            "                  (       )                   "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m+++++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m-::::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m.. .      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m               :  .                    \u001b[0m\u001b[1m\u001b[38;2;34;197;94mH\u001b[0m\u001b[38;2;248;250;252m                  :.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                        :=-=######*++=+=++=*=+++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                           #++-+===--::..::::---\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                            ::-.               .\u001b[0m",
+            "",
+            ""
         ),
-        # Frame 2: Rising flame
         @(
-            "                   (  .  )                    ",
-            "                  (   .   )                   ",
-            "                 (  (   )  )                  "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m+**+++++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m===-::::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m..... .      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                  :  .                \u001b[0m\u001b[1m\u001b[38;2;34;197;94mHell\u001b[0m\u001b[38;2;248;250;252m             :.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                     :=-=######*++=+=++=*=++++++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                        #++-+===--::..::::---===\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                         ::-.               ....\u001b[0m",
+            "",
+            ""
         ),
-        # Frame 3: Flame bloom
         @(
-            "                  (  .      )                 ",
-            "                 )           (                ",
-            "                (   .  )     . )              "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m*+++**+++++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m++====-::::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m::...... .      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                     :  .           \u001b[0m\u001b[1m\u001b[38;2;34;197;94mHello PI\u001b[0m\u001b[38;2;248;250;252m        :.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                  :=-=######*++=+=++=*=+++++++*+\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                     #++-+===--::..::::---====++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                      ::-.               ......:\u001b[0m",
+            "",
+            ""
         ),
-        # Frame 4: Fire dancing
         @(
-            "                 (  .      )                  ",
-            "                )     .     (                 ",
-            "               (   .  )     . )               "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m  +*+++**+++++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m  +++====-::::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m  :::...... .      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                        :  .        \u001b[0m\u001b[1m\u001b[38;2;34;197;94mHello PI\u001b[0m\u001b[38;2;248;250;252m     :.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                               :=-=######*++=+=++=*=+++++++*++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                  #++-+===--::..::::---====+++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                   ::-.               ......::\u001b[0m",
+            "",
+            ""
         ),
-        # Frame 5: Fully ON FIRE
         @(
-            "                )   (   .   )  (              ",
-            "               (  .      ( .   ) )            ",
-            "              (    (  )   )   )   )           "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m    +*+++**+++++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m    +++====-::::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m    :::...... .      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                          :  .    \u001b[0m\u001b[1m\u001b[38;2;56;189;248m*\u001b[0m \u001b[1m\u001b[38;2;34;197;94mHello PI\u001b[0m \u001b[1m\u001b[38;2;56;189;248m*\u001b[0m\u001b[38;2;248;250;252m :.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                             :=-=######*++=+=++=*=+++++++*++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                #++-+===--::..::::---====+++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                 ::-.               ......::\u001b[0m",
+            "",
+            ""
         ),
-        # Frame 6: Grand Finale
         @(
-            "               )   (   .   )  (               ",
-            "              (  .      ( .   ) )             ",
-            "              (    (  )   )   )   )           ",
-            "               \  / \/ \  / \ / \ /           "
+            "",
+            "",
+            "  \u001b[38;2;248;250;252m     +*+++**+++++++*###*+=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m     +++====-::::::.:=@@@@*#*=-.\u001b[0m",
+            "  \u001b[38;2;248;250;252m     :::...... .      .-+#*=:::==:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                           :  .   \u001b[0m\u001b[1m\u001b[38;2;56;189;248m*\u001b[0m \u001b[1m\u001b[38;2;34;197;94mHello PI\u001b[0m \u001b[1m\u001b[38;2;56;189;248m*\u001b[0m\u001b[38;2;248;250;252m:.:\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                            :=-=######*++=+=++=*=+++++++*++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                               #++-+===--::..::::---====+++\u001b[0m",
+            "  \u001b[38;2;248;250;252m                                                ::-.               ......::\u001b[0m",
+            "",
+            ""
         )
     )
 
-    $statusTitles = @(
-        "IGNITING ENGINE",
-        "IGNITING ENGINE",
-        "HEATING UP CORES",
-        "HEATING UP CORES",
-        "GOING ON FIRE",
-        "PI-TER IS ON FIRE!",
-        "P I - T E R   R E A D Y"
-    )
-
-    $frameDelay = 65
-    $totalSteps = $frameFlame.Count
-
+    $frameDelay = 75
     Clear-Host
 
-    for ($idx = 0; $idx -lt $totalSteps; $idx++) {
-        $flame = $frameFlame[$idx]
-        $title = $statusTitles[$idx]
+    for ($idx = 0; $idx -lt $frames.Count; $idx++) {
+        $f = $frames[$idx]
+        try { [Console]::SetCursorPosition(0, 2) } catch {}
 
-        # Calculate progress bar
-        $pct = [Math]::Round(($idx / ($totalSteps - 1)) * 100)
-        $barWidth = 20
-        $filled = [Math]::Round(($idx / ($totalSteps - 1)) * $barWidth)
-        $empty = $barWidth - $filled
-        $barStr = "$cOrange" + ("=" * $filled) + "$cDim" + ("-" * $empty) + "$cReset"
-
-        try { [Console]::SetCursorPosition(0, 1) } catch {}
-
-        Write-Host "$cDim------------------------------------------------$cReset"
-        
-        # Render Flame lines
-        for ($l = 0; $l -lt $flame.Count; $l++) {
-            $line = $flame[$l]
-            if ($l -eq 0) {
-                Write-Host "   $cYellow$line$cReset"
-            } elseif ($l -eq 1) {
-                Write-Host "   $cOrange$line$cReset"
-            } else {
-                Write-Host "   $cRed$line$cReset"
-            }
+        foreach ($line in $f) {
+            Write-Host $line
         }
 
-        # Progress bar line
-        Write-Host "            [ $barStr ] $cCyan$pct%$cReset"
-
-        # Title line
-        if ($idx -eq ($totalSteps - 1)) {
-            Write-Host "             $cBold$cCyan⚡ $title ⚡$cReset"
-        } elseif ($idx -ge 4) {
-            Write-Host "             $cBold$cRed🔥 $title 🔥$cReset"
-        } else {
-            Write-Host "             $cDim⚡ $title ⚡$cReset"
-        }
-
-        Write-Host "$cDim------------------------------------------------$cReset"
         Start-Sleep -Milliseconds $frameDelay
     }
 
-    Start-Sleep -Milliseconds 90
+    Start-Sleep -Milliseconds 220
     try { [Console]::CursorVisible = $origCursor } catch {}
     Clear-Host
 }
