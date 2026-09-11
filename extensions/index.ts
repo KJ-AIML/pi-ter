@@ -6,13 +6,24 @@ import { CustomStatusBar } from "./status-bar.ts";
 
 export default function (pi: ExtensionAPI) {
   const statusBar = new CustomStatusBar(pi);
-  const cleanHeader = new CleanHeader();
+  const cleanHeader = new CleanHeader(pi);
 
   // Attach clean header and status bar on session start
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("pi-ter loaded: clean header, status bar & ON FIRE mode ready", "info");
     cleanHeader.attach(ctx);
     statusBar.attach(ctx);
+    cleanHeader.startSplash();
+  });
+
+  pi.on("input", async () => { cleanHeader.collapse(); return { action: "continue" as const }; });
+  pi.on("before_agent_start", async () => { cleanHeader.collapse(); });
+  pi.registerCommand("workspace", {
+    description: "Browse loaded skills, extensions, prompts and context",
+    handler: async (args, ctx) => cleanHeader.browse(args, ctx),
+  });
+  pi.registerCommand("hello-pi", {
+    description: "Replay the Hello PI startup animation",
+    handler: async (_args, ctx) => { cleanHeader.replay(); },
   });
 
   // Keep computer awake while Pi is actively thinking, tool-calling, or streaming
@@ -28,7 +39,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Ensure sleep locks are released when session ends
-  pi.on("session_end", async (_event, _ctx) => {
+  pi.on("session_shutdown", async (_event, _ctx) => {
+    cleanHeader.dispose();
     awakeController.dispose();
   });
 
@@ -57,10 +69,10 @@ export default function (pi: ExtensionAPI) {
 
   // Command to toggle clean minimalist header
   pi.registerCommand("header", {
-    description: "Toggle clean minimalist header vs built-in verbose header",
+    description: "Toggle Workspace welcome screen vs built-in header",
     handler: async (_args, ctx) => {
       const active = cleanHeader.toggle(ctx);
-      ctx.ui.notify(`Clean header: ${active ? "enabled (minimal)" : "disabled (built-in)"}`, "info");
+      ctx.ui.notify(`Clean header: ${active ? "enabled (Workspace)" : "disabled (built-in)"}`, "info");
     },
   });
 
