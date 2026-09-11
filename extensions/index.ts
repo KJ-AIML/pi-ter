@@ -1,14 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { awakeController } from "./awake.ts";
+import { CleanHeader } from "./clean-header.ts";
 import { CustomStatusBar } from "./status-bar.ts";
 
 export default function (pi: ExtensionAPI) {
   const statusBar = new CustomStatusBar(pi);
+  const cleanHeader = new CleanHeader();
 
-  // Announce extension and attach status bar on session start
+  // Attach clean header and status bar on session start
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("pi-ter extension loaded: custom status bar & ON FIRE mode ready", "info");
+    ctx.ui.notify("pi-ter loaded: clean header, status bar & ON FIRE mode ready", "info");
+    cleanHeader.attach(ctx);
     statusBar.attach(ctx);
   });
 
@@ -52,6 +55,15 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // Command to toggle clean minimalist header
+  pi.registerCommand("header", {
+    description: "Toggle clean minimalist header vs built-in verbose header",
+    handler: async (_args, ctx) => {
+      const active = cleanHeader.toggle(ctx);
+      ctx.ui.notify(`Clean header: ${active ? "enabled (minimal)" : "disabled (built-in)"}`, "info");
+    },
+  });
+
   // Register the piter root command
   pi.registerCommand("piter", {
     description: "Inspect or test pi-ter plugin status",
@@ -72,8 +84,13 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Custom status bar: ${active ? "enabled" : "disabled"}`, "info");
         return;
       }
+      if (subcommand === "header") {
+        const active = cleanHeader.toggle(ctx);
+        ctx.ui.notify(`Clean header: ${active ? "enabled" : "disabled"}`, "info");
+        return;
+      }
       ctx.ui.notify(
-        `pi-ter is active. Subcommands: fire (current: ${awakeController.isOnFire() ? "ON" : "OFF"}), statusbar (current: ${statusBar.isEnabled() ? "on" : "off"}), ping`,
+        `pi-ter active. Subcommands: header, statusbar, fire (awake: ${awakeController.isOnFire() ? "ON" : "OFF"}), ping`,
         "info",
       );
     },
