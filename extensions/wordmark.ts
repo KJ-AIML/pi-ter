@@ -22,14 +22,18 @@ export function wordmark(columns: number, accent: string): string[] {
       for (const [dx,dy,bit] of dots) {
         const x = cx * 2 + dx, y = cy * 4 + dy;
         const v = sample(x,y);
-        // Dense front faces, lighter textured sides; keep silhouette holes black.
-        if (v > 0 && v / 255 > .10 + bayer[(y % 4) * 4 + x % 4] / 16 * .56) {
+        // Keep front faces solid; reserve dithering for the recessed sides.
+        if (v >= 100 || (v > 0 && v / 255 > .10 + bayer[(y % 4) * 4 + x % 4] / 16 * .56)) {
           bits |= bit; total += v; count++;
         }
       }
       if (!bits) { line += ' '; continue; }
       const light = total / count / 255;
-      const color = rgb.map(c => Math.round(light > .72 ? c + (255-c) * (light-.72)/.28 : c * (.3+light*.95)));
+      // Lift the front toward pearl white; keep the lower-value extrusion tinted.
+      const highlight = Math.min(.97, .65 + Math.max(0, light - 100 / 255) * .53);
+      const color = rgb.map(c => Math.round(light >= 100 / 255
+        ? c + (255 - c) * highlight
+        : c * (.45 + light * .8)));
       line += `\x1b[38;2;${color.join(';')}m${String.fromCharCode(0x2800 + bits)}\x1b[0m`;
     }
     lines.push(line);
