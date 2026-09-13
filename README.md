@@ -39,8 +39,11 @@ The welcome screen uses two columns in wide terminals and a compact layout below
 92 columns. Its accent is chosen once per session from lavender, cyan, mint,
 pink and amber. Skills are grouped by name into Development, Review, Infrastructure,
 Design and Other, with counts from the loaded inventory. Empty groups are hidden;
-`/workspace skills` shows every name. The connected-line wordmark and spacing adapt to the
-terminal height. Harness status is left to its own extension. Submitting a prompt collapses it into the compact header.
+`/workspace skills` shows every name. The shaded Braille wordmark and spacing adapt to the
+terminal height. Its baked beveled lettering has highlights and extruded shadows,
+with no runtime fonts or graphics protocol required. Rebuild the art with
+`python scripts/build-wordmark.py` (Pillow, NumPy, SciPy and DejaVu Sans Mono
+Bold Oblique required only for rebuilding). Harness status is left to its own extension. Submitting a prompt collapses it into the compact header.
 Resumed conversations skip the welcome body and automatic intro.
 
 - `/workspace` — browse loaded resource names; also `/workspace skills`,

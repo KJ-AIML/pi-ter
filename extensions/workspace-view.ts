@@ -1,3 +1,4 @@
+import { wordmark } from './wordmark.ts';
 import { basename } from 'node:path';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
@@ -13,16 +14,6 @@ export const fit = (text: string, width: number) => {
 export const plain = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, '');
 export type Resources = Record<'Skills' | 'Extensions' | 'Prompts' | 'Context', string[]>;
 export const emptyResources = (): Resources => ({ Skills: [], Extensions: [], Prompts: [], Context: [] });
-
-// Connected strokes stay legible at ordinary terminal font sizes.
-const glyphs = [
-  ['╭───╮', '│   │', '├───╯', '│    ', '╵    '],
-  ['╶─┬─╴', '  │  ', '  │  ', '  │  ', '╶─┴─╴'],
-  ['╶─┬─╴', '  │  ', '  │  ', '  │  ', '  ╵  '],
-  ['╭────', '│    ', '├───╴', '│    ', '╰────'],
-  ['╭───╮', '│   │', '├─┬─╯', '│ ╰╮ ', '╵  ╰╴'],
-];
-const logo = Array.from({ length: 5 }, (_, row) => glyphs.map(g => g[row]).join('  '));
 
 // Display-only grouping by name; unknown skills remain visible in Other.
 export function groupSkills(skills: string[]): { label: string; items: string[] }[] {
@@ -47,9 +38,10 @@ export function workspaceLines(width: number, height: number, cwd: string, resou
     ` ${muted('Type your prompt or')} / for commands  ·  ${paint('#ffb15b', '/fire')}  ·  Ctrl+O for tools`,
   ];
   if (!expanded || height < 13) return header.map(s => fit(s, width));
-  const left = [title(`WORKSPACE / ${name.toUpperCase()}`), '', ...logo.map(title), '', title(name), cwd, muted(`Context  ${resources.Context.join(' · ') || 'None loaded'}`)];
+  const leftWidth = Math.min(56, Math.floor(width * .36));
+  const logo = wordmark(leftWidth, accent);
+  const left = [title(`WORKSPACE / ${name.toUpperCase()}`), '', ...logo, '', title(name), cwd, muted(`Context  ${resources.Context.join(' · ') || 'None loaded'}`)];
   const right: string[] = [];
-  const leftWidth = Math.min(48, Math.floor(width * .36));
   const rightWidth = width >= 92 ? width - leftWidth - 6 : width - 2;
   const heading = (label: keyof Resources, color: string) =>
     fit(paint(color, `▾  ${label}`), Math.max(0, rightWidth - String(resources[label].length).length - 1)) + ` ${resources[label].length}`;

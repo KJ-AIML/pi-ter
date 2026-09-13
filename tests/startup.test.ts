@@ -113,3 +113,16 @@ test('grouped inventory accounts for every skill and keeps all resource headings
   const output = plain(workspaceLines(120, 32, '/project/Piter', resources, '#c995f5', '0.85.1').join('\n'));
   for (const group of groups) assert.ok(output.includes(group.label));
 });
+
+test('shaded wordmark renders bounded Braille cells with multiple lighting levels', async () => {
+  const { wordmark } = await import('../extensions/wordmark.ts');
+  for (const width of [33, 43, 48, 56]) {
+    const lines = wordmark(width, '#c995f5');
+    assert.ok(lines.length <= 11);
+    assert.ok(lines.every(line => visibleWidth(line) === width));
+    const output = lines.join('');
+    assert.match(output, /[\u2801-\u28ff]/);
+    assert.ok(new Set(output.match(/\x1b\[38;2;[0-9;]+m/g)).size > 8);
+    assert.equal(output, wordmark(width, '#c995f5').join(''));
+  }
+});
