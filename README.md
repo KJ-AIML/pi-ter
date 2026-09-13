@@ -37,7 +37,10 @@ Escape or Enter also skips. Resizing recalculates the animation and layout.
 
 The welcome screen uses two columns in wide terminals and a compact layout below
 92 columns. Its accent is chosen once per session from lavender, cyan, mint,
-pink and amber. Submitting a prompt collapses it into the compact header.
+pink and amber. Skills are grouped by name into Development, Review, Infrastructure,
+Design and Other, with counts from the loaded inventory. Empty groups are hidden;
+`/workspace skills` shows every name. The pixel wordmark and spacing adapt to the
+terminal height. Harness status is left to its own extension. Submitting a prompt collapses it into the compact header.
 Resumed conversations skip the welcome body and automatic intro.
 
 - `/workspace` — browse loaded resource names; also `/workspace skills`,

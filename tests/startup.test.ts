@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { workspaceLines, emptyResources, plain } from '../extensions/workspace-view.ts';
+import { workspaceLines, emptyResources, plain, groupSkills } from '../extensions/workspace-view.ts';
 import { StartupResources } from '../extensions/startup-resources.ts';
 import { splashFrame, HelloPiSplash } from '../extensions/hello-pi/splash.ts';
 
@@ -15,7 +15,7 @@ test('welcome fits narrow, short, wide and resized terminals', () => {
   }
   const frame = workspaceLines(120, 32, '/project/Piter', resources, '#c995f5', '0.85.1');
   assert.match(plain(frame.join('\n')), /WORKSPACE \/ PITER/);
-  assert.match(plain(frame.join('\n')), /Heli-Harness active/);
+  assert.doesNotMatch(plain(frame.join('\n')), /Heli-Harness active/);
   assert.doesNotMatch(workspaceLines(120, 32, '/p', emptyResources(), '#c995f5', '0.85.1').join(''), /Heli-Harness active/);
 });
 
@@ -93,4 +93,23 @@ test('non-TUI sessions install no header or splash', async () => {
     header.startSplash();
   }
   header.dispose();
+});
+
+
+test('grouped inventory accounts for every skill and keeps all resource headings on resize', () => {
+  const skills = ['coding-agent', 'code-review', 'docker-deploy', 'visual-design', 'custom-unmatched'];
+  const groups = groupSkills(skills);
+  assert.deepEqual(groups.map(g => g.label), ['Development', 'Review', 'Infrastructure', 'Design', 'Other']);
+  assert.deepEqual(groups.flatMap(g => g.items).sort(), [...skills].sort());
+  const resources = { Skills: skills, Extensions: ['heli-harness'], Prompts: ['/help'], Context: ['AGENTS.md'] };
+  for (const [width, height] of [[40, 13], [80, 20], [120, 24], [120, 32], [180, 50]]) {
+    const frame = workspaceLines(width, height, '/project/Piter', resources, '#c995f5', '0.85.1');
+    const output = plain(frame.join('\n'));
+    for (const label of ['Skills', 'Extensions', 'Prompts', 'Context']) assert.ok(output.includes(label), `${label} at ${width}x${height}`);
+    assert.equal(frame.length, height);
+    assert.ok(frame.every(line => visibleWidth(line) === width));
+    assert.doesNotMatch(output, /Heli-Harness active/);
+  }
+  const output = plain(workspaceLines(120, 32, '/project/Piter', resources, '#c995f5', '0.85.1').join('\n'));
+  for (const group of groups) assert.ok(output.includes(group.label));
 });
