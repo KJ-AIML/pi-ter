@@ -14,15 +14,15 @@ export const plain = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, '');
 export type Resources = Record<'Skills' | 'Extensions' | 'Prompts' | 'Context', string[]>;
 export const emptyResources = (): Resources => ({ Skills: [], Extensions: [], Prompts: [], Context: [] });
 
-// Spaced pixels retain the wordmark without turning it into a solid slab.
+// Connected strokes stay legible at ordinary terminal font sizes.
 const glyphs = [
-  ['110', '101', '110', '100', '100'],
-  ['111', '010', '010', '010', '111'],
-  ['111', '010', '010', '010', '010'],
-  ['111', '100', '110', '100', '111'],
-  ['110', '101', '110', '101', '101'],
+  ['╭───╮', '│   │', '├───╯', '│    ', '╵    '],
+  ['╶─┬─╴', '  │  ', '  │  ', '  │  ', '╶─┴─╴'],
+  ['╶─┬─╴', '  │  ', '  │  ', '  │  ', '  ╵  '],
+  ['╭────', '│    ', '├───╴', '│    ', '╰────'],
+  ['╭───╮', '│   │', '├─┬─╯', '│ ╰╮ ', '╵  ╰╴'],
 ];
-const logo = Array.from({ length: 5 }, (_, row) => glyphs.map(g => [...g[row]].map(c => c === '1' ? '▪' : ' ').join(' ')).join('  '));
+const logo = Array.from({ length: 5 }, (_, row) => glyphs.map(g => g[row]).join('  '));
 
 // Display-only grouping by name; unknown skills remain visible in Other.
 export function groupSkills(skills: string[]): { label: string; items: string[] }[] {
