@@ -52,6 +52,6 @@ test('owned supervisor retains inherited pipes after its immediate child exits',
  const m=setup(t);
  const script="const {spawn}=require('child_process');spawn(process.execPath,['-e',`console.log('descendant-ready');setInterval(()=>{},100)`],{stdio:['ignore',1,2]}).unref()";
  const a=m.start({...launch(''),args:[fileURLToPath(new URL('../extensions/tasks/windows-supervisor.mjs',import.meta.url)),process.execPath,'-e',script]});
- await until(()=>a.logs.some(l=>l.text.includes('descendant-ready')));
+ try{await until(()=>a.logs.some(l=>l.text.includes('descendant-ready')));}catch(error){throw new Error(JSON.stringify({status:a.status,error:a.error,logs:a.logs}),{cause:error});}
  await m.stop(a.id);assert.equal(a.status,'stopped');
 });
