@@ -102,6 +102,8 @@ existing input and status bar stay in place. Open **`/tasks`** or **Ctrl+Alt+T**
 while the main agent continues working. `/piter-tasks` is the namespaced alias
 if another extension owns `/tasks`.
 
+For an existing Git-installed copy, run `pi update --extensions` outside Pi and restart Pi to load the new tools.
+
 ### Start work
 
 Ask the agent normally, for example:
@@ -159,6 +161,8 @@ Closing the viewer does not stop work. Stop an infinite loop from Tasks when don
 | `piter_tasks` | No ID lists tasks; `id`, optional `after_seq`, `limit` reads logs |
 | `piter_task_stop` | `id`; stops this session's owned task and its process tree |
 
+The panel tracks work launched through these Pi-ter tools and commands; it does not intercept terminals or subagents created by other extensions.
+
 The default timeout is **1,800 seconds**. Tool callers may specify `timeout: 0`
 for no timeout, or a timeout up to one day. Up to **4 tasks** run concurrently;
 additional starts return a clear error. Finished tasks remain inspectable.
@@ -202,6 +206,6 @@ OpenAI-compatible fixture. This verifies provider configuration loading, a real
 GitHub Actions runs the suite on Linux, Windows and macOS. Live DashScope and
 CLIProxy accounts still require testing with your own configuration.
 
-Run commands in the foreground inside each managed task. Programs that deliberately detach into a new process group, Windows detached services, or scheduled jobs escape session ownership and cannot be stopped from Tasks. On Windows an owned supervisor preserves the process tree while inherited output remains open.
+Run commands in the foreground inside each managed task. Programs that deliberately detach into a new process group, Windows detached services, or scheduled jobs escape session ownership and cannot be stopped from Tasks. On Windows, keep the launched command running in the foreground: once its shell exits, inherited output can close and remaining descendants may no longer be tracked or stoppable. Do not use Start-Process or shell-detaching patterns to launch managed work. The Tasks runtime itself provides background execution.
 
 Standalone Windows Pi installations need `node` on PATH for the task supervisor; npm-based Pi installations reuse their running Node runtime.

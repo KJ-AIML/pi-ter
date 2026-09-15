@@ -1,5 +1,5 @@
-// Keep an owned root alive while inherited output pipes are still open, so
-// taskkill /T can stop a shell's children even after the shell itself exits.
+// Own and forward the foreground command until its output pipes close.
+// Windows detached commands that outlive their shell are not managed tasks.
 import { spawn } from 'node:child_process';
 const [executable, ...args] = process.argv.slice(2);
 const child = spawn(executable, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
