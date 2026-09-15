@@ -1,10 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { registerTasks } from "./tasks/index.ts";
 import { awakeController } from "./awake.ts";
 import { CleanHeader } from "./clean-header.ts";
 import { CustomStatusBar } from "./status-bar.ts";
 
 export default function (pi: ExtensionAPI) {
+  registerTasks(pi);
   const statusBar = new CustomStatusBar(pi);
   const cleanHeader = new CleanHeader(pi);
 
