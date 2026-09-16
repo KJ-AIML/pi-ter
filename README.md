@@ -98,8 +98,16 @@ The existing `skills/` and `prompts/` are still included in the Pi package.
 ## Background tasks and subagents
 
 Pi-ter now adds a shared Tasks panel for commands and child Pi agents. Your
-existing input and status bar stay in place. Open **`/tasks`** or **Ctrl+Alt+T**
-while the main agent continues working. `/piter-tasks` is the namespaced alias
+existing input and status bar stay in place. A **Tasks card** remains visible above
+the editor, including when no tasks exist. In fullscreen mode, click the card to
+open the panel or a task row to open its logs. Click a task in the panel to inspect
+it; use the **Back / Close** controls or Escape to return.
+
+Press **F6** (on some Macs, **Fn+F6**) to open it without typing a command,
+including with a custom editor. **Ctrl+Alt+T** remains an alternate shortcut,
+but a terminal or OS may intercept it before Pi receives it. **`/tasks`** is
+always available. Mouse interaction requires Pi fullscreen mode:
+`pi --tui-mode fullscreen`; regular mode uses F6 or the command. `/piter-tasks` is the namespaced alias
 if another extension owns `/tasks`.
 
 For an existing Git-installed copy, run `pi update --extensions` outside Pi and restart Pi to load the new tools.
@@ -141,6 +149,8 @@ Closing the viewer does not stop work. Stop an infinite loop from Tasks when don
 
 | Key | Action |
 | --- | --- |
+| F6 | Open Tasks from the main screen |
+| Click (fullscreen) | Open the card/task, Back or Close |
 | Up / Down | Select task, or scroll log |
 | Tab | Filter all / terminals / agents in task list |
 | Enter | Open selected task |

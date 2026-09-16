@@ -151,3 +151,13 @@ test('multiline task metadata never escapes a rendered terminal row', () => {
  assert.ok(view.render(100).every(row=>!/[\r\n]/.test(row)));
  view.dispose();
 });
+
+test('mouse opens a task row and closes details without typing a command',()=>{
+ const source=new Source([task('a','terminal','Build')]);let closed=0;
+ const view=new TasksView(source,()=>{},()=>closed++,()=>20);
+ view.render(100);
+ view.handleMouse({type:'click',button:'left',x:10,y:2} as any);
+ assert.match(clean(view.render(100)),/cwd/);
+ view.handleMouse({type:'click',button:'left',x:9,y:0} as any);
+ assert.equal(closed,1);view.dispose();
+});

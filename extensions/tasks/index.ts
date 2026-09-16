@@ -3,7 +3,7 @@ import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type } from 'typebox';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { truncateToWidth } from '@earendil-works/pi-tui';
+import { isKeyRelease, matchesKey, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { cleanOutput, TaskManager } from './manager.ts';
 import { activeTask, type TaskRecord } from './types.ts';
 import { terminalLaunch, type ShellKind } from './process.ts';
@@ -20,9 +20,11 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
   let unsubscribe:(()=>void)|undefined;let complete:(()=>void)|undefined;let renderTimer:NodeJS.Timeout|undefined;
   let view:TasksView|undefined;let closeView:(()=>void)|undefined;
   let widgetRefresh:(()=>void)|undefined;
+  let unsubscribeInput:(()=>void)|undefined;
   const child=process.env.PITER_SUBAGENT==='1';
   async function dispose(){
     const current=manager;
+    unsubscribeInput?.();unsubscribeInput=undefined;
     unsubscribe?.();unsubscribe=undefined;complete?.();complete=undefined;
     clearTimeout(renderTimer);view?.dispose();view=undefined;closeView?.();closeView=undefined;
     if(context?.hasUI)context.ui.setWidget('piter-tasks',undefined);
@@ -38,11 +40,28 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     unsubscribe=m.subscribe(refresh);
     if(ctx.hasUI)ctx.ui.setWidget('piter-tasks',(tui)=>{
       widgetRefresh=()=>tui.requestRender();
+      const launch=(id?:string)=>{void open(ctx,id).catch(error=>ctx.ui.notify(String(error.message||error),'error'));};
+      unsubscribeInput?.();
+      unsubscribeInput=ctx.ui.onTerminalInput(data=>{
+        if(view||tui.hasOverlay()||isKeyRelease(data))return;
+        if(matchesKey(data,'f6')||matchesKey(data,'ctrl+alt+t')){launch();return {consume:true};}
+      });
+      let shown:TaskRecord[]=[];
       return {render:(width:number)=>{
-        const tasks=m.list();if(!tasks.length)return [];
-        const running=tasks.filter(activeTask);const recent=running.length?running:tasks.slice(-1);
-        return [` Tasks  ${running.length} running · ${tasks.length-running.length} finished  /tasks · Ctrl+Alt+T`,...recent.slice(-2).map(t=>` ${t.kind==='agent'?'◆':'▸'} ${t.title} · ${t.status} · ${t.latest}`)].map(line=>truncateToWidth(cleanOutput(line).replace(/[\r\n]/g,' '),width));
-      },invalidate(){},dispose(){widgetRefresh=undefined;}};
+        const tasks=m.list();const running=tasks.filter(activeTask);
+        shown=(running.length?running:tasks.slice(-2)).slice(-2);
+        const inner=Math.max(0,width-4);
+        const row=(text:string)=>' │'+truncateToWidth(cleanOutput(text).replace(/[\r\n]/g,' '),inner,'',true)+'│';
+        const border='─'.repeat(inner);
+        const hint=tui.mode==='fullscreen'?'click to open':'/tasks';
+        return [' ┌'+border+'┐',row(` Tasks [F6] · ${running.length} running · ${tasks.length-running.length} finished · ${hint}`),
+          ...shown.map(t=>row(` ${t.kind==='agent'?'◆':'▸'} ${t.title} · ${t.status} · ${t.latest}`)),
+          ' └'+border+'┘'].map(line=>truncateToWidth(line,width));
+      },handleMouse(event:TuiMouseEvent){
+        if(event.button!=='left'||!['press','click','release'].includes(event.type))return;
+        if(event.type==='click')launch(shown[event.y-2]?.id);
+        return {handled:true};
+      },invalidate(){},dispose(){unsubscribeInput?.();unsubscribeInput=undefined;widgetRefresh=undefined;}};
     },{placement:'aboveEditor'});
     complete=m.onComplete(task=>{
       if(manager!==m)return;
@@ -93,6 +112,7 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     pi.on('session_shutdown',async()=>{await dispose();});
     pi.registerCommand('tasks',{description:'View background terminals and subagents; see /piter-tasks help',handler:command});
     pi.registerCommand('piter-tasks',{description:'Background terminals, subagents, logs and stop controls',handler:command});
+    pi.registerShortcut('f6',{description:'Open Pi-ter Tasks',handler:ctx=>open(ctx)});
     pi.registerShortcut('ctrl+alt+t',{description:'Open Pi-ter Tasks',handler:ctx=>open(ctx)});
     pi.registerTool({name:'piter_terminal',label:'Background terminal',description:'Run a shell command in the background while continuing other work. Returns a task ID immediately; completion arrives automatically. Captures stdout/stderr; no interactive stdin/PTY. Windows defaults to PowerShell, POSIX to sh. Use for servers, watches and long-running jobs.',parameters:Type.Object({command:Type.String({minLength:1,maxLength:32000}),title:Type.Optional(Type.String({maxLength:200})),cwd:Type.Optional(Type.String()),shell:Type.Optional(Type.Union(['auto','powershell','cmd','bash','sh'].map(s=>Type.Literal(s)))),timeout:timeoutSchema}),async execute(_id,params,signal,_update,ctx){if(signal?.aborted)throw new Error('Request aborted before launch');return runTerminal(params,ctx);}});
     pi.registerTool({name:'piter_agent',label:'Spawn subagent',description:'Delegate a bounded task to a separate Pi process with isolated context. Returns its ID immediately; emitted messages/tool calls are visible in /tasks and completion arrives automatically. Inherits current provider/model by default, environment and installed Pi configuration. Supply full task context; parent chat is not automatically copied. Agents share cwd files; assign disjoint writes. Subagents cannot recursively use Pi-ter task tools.',parameters:Type.Object({task:Type.String({minLength:1,maxLength:64000}),title:Type.Optional(Type.String({maxLength:200})),cwd:Type.Optional(Type.String()),provider:Type.Optional(Type.String()),model:Type.Optional(Type.String()),timeout:timeoutSchema}),async execute(_id,params,signal,_update,ctx){if(signal?.aborted)throw new Error('Request aborted before launch');return runAgent(params,ctx);}});

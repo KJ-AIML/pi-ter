@@ -1,4 +1,4 @@
-import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { activeTask, type LogEntry, type LogStream, type TaskRecord, type TaskSource } from './types.ts';
 
 const cyan = (s: string) => `\x1b[38;2;103;220;229m${s}\x1b[0m`;
@@ -24,6 +24,7 @@ const elapsed = (task: TaskRecord) => {
 
 export class TasksView {
   private mode: 'list' | 'detail';
+  private mouseRows = new Map<number,string>();
   private filter: 'all' | 'terminal' | 'agent' = 'all';
   private selectedId?: string;
   private searchMode = false;
@@ -70,7 +71,8 @@ export class TasksView {
     const tasks = this.filteredTasks();
     if (!tasks.some(t => t.id === this.selectedId)) this.selectedId = tasks[0]?.id;
     const counts = (kind: 'terminal' | 'agent') => all.filter(t => t.kind === kind).length;
-    const lines = [cyan(' TASKS') + dim(`  ${all.length} total`),
+    this.mouseRows.clear();
+    const lines = [dim(' [Close]') + cyan(' TASKS') + dim(`  ${all.length} total`),
       ` ${this.filter === 'all' ? purple('[ALL]') : dim(' all ')}  ${this.filter === 'terminal' ? purple('[TERMINAL]') : dim(` terminal ${counts('terminal')}`)}  ${this.filter === 'agent' ? purple('[AGENT]') : dim(` agent ${counts('agent')}`)}`];
     if (!tasks.length) lines.push('', dim('  No tasks in this view.'));
     const budget = Math.max(0, height - 3);
@@ -78,6 +80,7 @@ export class TasksView {
     const start = Math.max(0, Math.min(selected - Math.floor(budget / 2), tasks.length - budget));
     for (const task of tasks.slice(start, start + budget)) {
       const marker = task.id === this.selectedId ? purple('›') : ' ';
+      this.mouseRows.set(lines.length,task.id);
       lines.push(` ${marker} ${cyan(task.kind === 'agent' ? '◆' : '▸')} ${oneLine(task.title)}  ${dim(`${task.status} · ${elapsed(task)} · ${task.id} · ${oneLine(task.latest)}`)}`);
     }
     const selectedTask = this.selectedId ? this.source.get(this.selectedId) : undefined;
@@ -91,7 +94,7 @@ export class TasksView {
     if (!task) return [cyan(' TASKS'), '', dim('  Task is no longer available.'), dim(' Esc back')];
     const exit = task.exitCode !== undefined ? ` · exit ${task.exitCode ?? '—'}` : '';
     const lines = [
-      `${cyan(' TASK')} ${purple(oneLine(task.title))} ${dim(`${task.status} · ${elapsed(task)}${exit}`)}`,
+      `${dim(' [Back] [Close]')} ${cyan(' TASK')} ${purple(oneLine(task.title))} ${dim(`${task.status} · ${elapsed(task)}${exit}`)}`,
       dim(` ${task.id} · ${task.kind}${task.model ? ` · ${oneLine(task.model)}` : ''}`),
       dim(` cwd ${oneLine(task.cwd)} · path ${oneLine(task.logPath)}`),
       dim(` cmd ${oneLine(task.command)}`),
@@ -142,6 +145,24 @@ export class TasksView {
       lines.push({ key: 'empty', seq: Number.MAX_SAFE_INTEGER, text: dim(query ? 'No matching log lines.' : 'No logs yet.') });
     }
     return lines;
+  }
+
+  handleMouse(event:TuiMouseEvent) {
+    if(event.type==='wheel'&&this.mode==='detail'){
+      this.scroll=Math.max(0,this.scroll-(event.wheelDelta??0));this.anchor=undefined;this.requestRender();return {handled:true};
+    }
+    if(event.button!=='left'||!['press','release','click'].includes(event.type))return;
+    if(event.type!=='click')return {handled:true};
+    if(this.confirmStop||this.searchMode)return {handled:true};
+    if(event.y===0){
+      if(this.mode==='list'&&event.x>=1&&event.x<8)this.close();
+      else if(this.mode==='detail'&&event.x>=8&&event.x<15)this.close();
+      else if(this.mode==='detail'&&event.x>=1&&event.x<7)this.handleInput('\x1b');
+    }else if(this.mode==='list'){
+      const id=this.mouseRows.get(event.y);
+      if(id&&this.source.get(id)){this.selectedId=id;this.mode='detail';this.search='';this.scroll=0;}
+    }
+    this.requestRender();return {handled:true};
   }
 
   handleInput(data: string): void {
