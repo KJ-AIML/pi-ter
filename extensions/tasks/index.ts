@@ -1,3 +1,4 @@
+import { paint } from '../workspace-view.ts';
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -50,13 +51,15 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
       return {render:(width:number)=>{
         const tasks=m.list();const running=tasks.filter(activeTask);
         shown=(running.length?running:tasks.slice(-2)).slice(-2);
-        const inner=Math.max(0,width-4);
-        const row=(text:string)=>' │'+truncateToWidth(cleanOutput(text).replace(/[\r\n]/g,' '),inner,'',true)+'│';
+        const inner=Math.max(0,Math.min(width-4,108));
+        const borderColor=(text:string)=>paint('#344654',text);
+        const label=(text:string)=>paint('#67dce5',text);
+        const row=(text:string)=>borderColor(' │')+truncateToWidth(text.replace(/[\r\n]/g,' '),inner,'',true)+borderColor('│');
         const border='─'.repeat(inner);
         const hint=tui.mode==='fullscreen'?'click to open':'/tasks';
-        return [' ┌'+border+'┐',row(` Tasks [F6] · ${running.length} running · ${tasks.length-running.length} finished · ${hint}`),
-          ...shown.map(t=>row(` ${t.kind==='agent'?'◆':'▸'} ${t.title} · ${t.status} · ${t.latest}`)),
-          ' └'+border+'┘'].map(line=>truncateToWidth(line,width));
+        return [borderColor(' ╭'+border+'╮'),row(` ${label('Tasks')}  ${paint('#c995f5','[F6]')}   ${running.length ? label(`${running.length} running`) : paint('#9297a6','Ready when you are')}  ${tasks.length ? paint('#9297a6',`· ${tasks.length-running.length} finished`) : ''}   ${paint('#9297a6',hint+' →')}`),
+          ...shown.map(t=>row(` ${t.kind==='agent'?'◆':'▸'} ${cleanOutput(t.title)} · ${t.status} · ${cleanOutput(t.latest)}`)),
+          borderColor(' ╰'+border+'╯')].map(line=>truncateToWidth(line,width));
       },handleMouse(event:TuiMouseEvent){
         if(event.button!=='left'||!['press','click','release'].includes(event.type))return;
         if(event.type==='click')launch(shown[event.y-2]?.id);

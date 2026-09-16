@@ -219,3 +219,11 @@ CLIProxy accounts still require testing with your own configuration.
 Run commands in the foreground inside each managed task. Programs that deliberately detach into a new process group, Windows detached services, or scheduled jobs escape session ownership and cannot be stopped from Tasks. On Windows, keep the launched command running in the foreground: once its shell exits, inherited output can close and remaining descendants may no longer be tracked or stoppable. Do not use Start-Process or shell-detaching patterns to launch managed work. The Tasks runtime itself provides background execution.
 
 Standalone Windows Pi installations need `node` on PATH for the task supervisor; npm-based Pi installations reuse their running Node runtime.
+
+### Workspace appearance
+
+The welcome screen uses a centered content area on wide terminals, adjacent resource counts, and short examples with `+N more`. Full resource names remain available through `/workspace`. The Tasks card uses a compact, muted border and cyan label; input and status-bar components are unchanged.
+
+![Terminal-cell preview with sample resources](docs/previews/workspace.png)
+
+The preview above is rendered from the actual welcome and Tasks components with sample inventory; the editor and external status-bar extension are not part of this preview.

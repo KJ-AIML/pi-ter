@@ -38,45 +38,48 @@ export function workspaceLines(width: number, height: number, cwd: string, resou
     ` ${muted('Type your prompt or')} / for commands  ·  ${paint('#ffb15b', '/fire')}  ·  Ctrl+O for tools`,
   ];
   if (!expanded || height < 13) return header.map(s => fit(s, width));
-  const leftWidth = Math.min(56, Math.floor(width * .36));
+  const layoutWidth = Math.min(width, 148);
+  const inset = Math.max(0, Math.floor((width-layoutWidth)/2));
+  const leftWidth = Math.min(48, Math.floor(layoutWidth * .36));
   const logo = wordmark(leftWidth, accent);
-  const left = [title(`WORKSPACE / ${name.toUpperCase()}`), '', ...logo, '', title(name), cwd, muted(`Context  ${resources.Context.join(' · ') || 'None loaded'}`)];
+  const left = [muted('YOUR WORKSPACE'), title(`WORKSPACE / ${name.toUpperCase()}`), '', ...logo, '', title(name), muted(cwd.replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, '~')), muted(`${resources.Context.length} context file${resources.Context.length===1?'':'s'} loaded`)];
   const right: string[] = [];
-  const rightWidth = width >= 92 ? width - leftWidth - 6 : width - 2;
+  const rightWidth = width >= 92 ? layoutWidth - leftWidth - 8 : width - 4;
   const heading = (label: keyof Resources, color: string) =>
-    fit(paint(color, `▾  ${label}`), Math.max(0, rightWidth - String(resources[label].length).length - 1)) + ` ${resources[label].length}`;
+    paint(color, label) + muted(`  /  ${resources[label].length}`);
   const bodyHeight = Math.max(0, height - 5);
   const contentBudget = bodyHeight - (width < 92 ? 3 : 0);
   const groups = groupSkills(resources.Skills);
   // Reserve every resource heading before spending spare rows on examples.
   const detailed = contentBudget >= 12 + Math.max(1, groups.length);
+  const preview = (items:string[], count=3) => items.slice(0,count).join(' · ') + (items.length>count ? `  +${items.length-count} more` : '');
   right.push(heading('Skills', '#eee780'));
   for (const group of groups) {
-    right.push(`   ${paint('#d1d5df', group.label)} ${muted(String(group.items.length))}${detailed ? muted(`  ${group.items.join(' · ')}`) : ''}`);
+    right.push(`  ${paint('#d1d5df', fit(group.label, 15))} ${title(String(group.items.length).padStart(2))}${detailed ? muted(`   ${preview(group.items,2)}`) : ''}`);
   }
   if (!groups.length) right.push(muted('   None loaded'));
   for (const [label, color] of [['Extensions', '#cf94f3'], ['Prompts', '#63bafa'], ['Context', '#e2e4eb']] as const) {
     if (detailed) right.push('');
     right.push(heading(label, color));
-    if (detailed) right.push(muted(`   ${resources[label].join(' · ') || 'None loaded'}`));
+    if (detailed) right.push(muted(`   ${preview(resources[label].map(item=>label==='Extensions'?item.replace(/^@[^/]+\//,'').replace(/:(src|dist)$/,''):item),label==='Context'?1:3) || 'None loaded'}`));
   }
   // Very short windows show totals; the resource picker still exposes all names.
   if (right.length > contentBudget) {
     right.splice(0, right.length, ...(['Skills', 'Extensions', 'Prompts', 'Context'] as const).map(label => heading(label, '#d1d5df')));
   }
   const contentHeight = width >= 92 ? Math.max(left.length, right.length) : right.length + 3;
-  const topPad = Math.min(3, Math.max(0, Math.floor((bodyHeight - contentHeight) / 3)));
+  const topPad = Math.min(6, Math.max(0, Math.floor((bodyHeight - contentHeight) / 3)));
   const lines = [...header, ''];
   for (let row = 0; row < bodyHeight; row++) {
     const i = row - topPad;
     if (width >= 92) {
-      const divider = i >= 0 && i < contentHeight ? title('│') : ' ';
-      lines.push(`  ${fit(left[i] || '', leftWidth)} ${divider}  ${fit(right[i] || '', rightWidth)}`);
+      const divider = i >= 0 && i < contentHeight ? paint('#303743','│') : ' ';
+      lines.push(`${' '.repeat(inset)}  ${fit(left[i] || '', leftWidth)}   ${divider}  ${fit(right[i] || '', rightWidth)}`);
     } else {
       const compact = [title(`WORKSPACE / ${name}`), muted(cwd), '', ...right];
       lines.push(`  ${compact[i] || ''}`);
     }
   }
-  lines.push(` ${muted('/workspace to browse all loaded resources')}`, '');
+  lines.push(` ${muted('/workspace  Browse resources     /tasks  View background work')}`, '');
   return lines.slice(0, height).map(s => fit(s, width));
 }
