@@ -4,11 +4,12 @@ import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type } from 'typebox';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { isKeyRelease, matchesKey, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
+import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { cleanOutput, TaskManager } from './manager.ts';
 import { activeTask, type TaskRecord } from './types.ts';
 import { terminalLaunch, type ShellKind } from './process.ts';
 import { agentLaunch } from './subagent.ts';
+import { THEME } from '../theme.ts';
 import { TasksView } from './view.ts';
 
 const timeoutSchema=Type.Optional(Type.Number({minimum:0,maximum:86400,description:'Timeout in seconds; default 1800. Set 0 for no timeout.'}));
@@ -48,23 +49,52 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
         if(matchesKey(data,'f6')||matchesKey(data,'ctrl+alt+t')){launch();return {consume:true};}
       });
       let shown:TaskRecord[]=[];
+      let hits:{id:string;kill:number;inspect:number}[]=[];
+      let expanded=false;
+      let spin:ReturnType<typeof setInterval>|undefined;
+      const frames=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+      const clock=(task:TaskRecord)=>{const seconds=Math.max(0,Math.floor(((task.endedAt??Date.now())-task.startedAt)/1000));return seconds<60?`${seconds}s`:`${Math.floor(seconds/60)}m${String(seconds%60).padStart(2,'0')}s`;};
+      const stopSpin=()=>{if(spin)clearInterval(spin);spin=undefined;};
       return {render:(width:number)=>{
         const tasks=m.list();const running=tasks.filter(activeTask);
-        shown=(running.length?running:tasks.slice(-2)).slice(-2);
-        const inner=Math.max(0,Math.min(width-4,108));
-        const borderColor=(text:string)=>paint('#344654',text);
-        const label=(text:string)=>paint('#67dce5',text);
-        const row=(text:string)=>borderColor(' │')+truncateToWidth(text.replace(/[\r\n]/g,' '),inner,'',true)+borderColor('│');
-        const border='─'.repeat(inner);
-        const hint=tui.mode==='fullscreen'?'click to open':'/tasks';
-        return [borderColor(' ╭'+border+'╮'),row(` ${label('Tasks')}  ${paint('#c995f5','[F6]')}   ${running.length ? label(`${running.length} running`) : paint('#9297a6','Ready when you are')}  ${tasks.length ? paint('#9297a6',`· ${tasks.length-running.length} finished`) : ''}   ${paint('#9297a6',hint+' →')}`),
-          ...shown.map(t=>row(` ${t.kind==='agent'?'◆':'▸'} ${cleanOutput(t.title)} · ${t.status} · ${cleanOutput(t.latest)}`)),
-          borderColor(' ╰'+border+'╯')].map(line=>truncateToWidth(line,width));
+        if(running.length&&!spin)spin=setInterval(()=>widgetRefresh?.(),120);
+        if(!running.length)stopSpin();
+        shown=expanded?running.slice(-8):[];
+        const count=running.length;
+        const head=paint(THEME.muted,` ${expanded?'▾':'▸'} Tasks ${count}`);
+        if(!expanded)return [truncateToWidth(head,width)];
+        const frame=frames[Math.floor(Date.now()/120)%frames.length];
+        const actions=' '+paint(THEME.muted,'[kill]')+' '+paint(THEME.accent,'[inspect]');
+        const actionsW=visibleWidth(actions);
+        hits=[];
+        const rows=shown.map(task=>{
+          const mark=paint(THEME.accent,frame);
+          const kind=paint(THEME.accent,task.kind==='agent'?'Agent':'Run');
+          const plain=cleanOutput(task.title).replace(/[\r\n]/g,' ');
+          const title=paint(THEME.text,plain);
+          const prefix=` ${mark} ${kind} `;
+          const room=Math.max(4,width-2-visibleWidth(prefix)-actionsW);
+          const shownTitle=truncateToWidth(title,room,'',true);
+          const kill=visibleWidth(prefix)+visibleWidth(shownTitle)+1;
+          hits.push({id:task.id,kill,inspect:kill+7});
+          return truncateToWidth(prefix+shownTitle+actions,Math.max(1,width-2),'');
+        });
+        return [truncateToWidth(head,width),...rows];
       },handleMouse(event:TuiMouseEvent){
         if(event.button!=='left'||!['press','click','release'].includes(event.type))return;
-        if(event.type==='click')launch(shown[event.y-2]?.id);
+        if(event.type==='click'){
+          const task=shown[event.y-1];
+          const right=event.width||80;
+          if(!expanded||event.y<=0)expanded=!expanded;
+          else if(task){
+            const hit=hits[event.y-1];
+            if(hit&&event.x>=hit.inspect)launch(task.id);
+            else if(hit&&event.x>=hit.kill){void m.stop(task.id).then(()=>widgetRefresh?.()).catch(error=>ctx.ui.notify(String(error.message||error),'error'));}
+          }
+          widgetRefresh?.();
+        }
         return {handled:true};
-      },invalidate(){},dispose(){unsubscribeInput?.();unsubscribeInput=undefined;widgetRefresh=undefined;}};
+      },invalidate(){},dispose(){stopSpin();unsubscribeInput?.();unsubscribeInput=undefined;widgetRefresh=undefined;}};
     },{placement:'aboveEditor'});
     complete=m.onComplete(task=>{
       if(manager!==m)return;
@@ -91,8 +121,9 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     if(!ctx.hasUI){throw new Error('Task viewer requires interactive Pi; use piter_tasks for logs');}
     const m=ensure(ctx);if(id&&!m.get(id))throw new Error('Unknown task ID in this session');
     if(view)return;
+    const modal=Boolean(id);
     try{await ctx.ui.custom<void>((tui,_theme,_keys,done)=>{
-      closeView=()=>done();view=new TasksView(m,()=>tui.requestRender(),()=>done(),()=>Math.max(4,tui.terminal.rows-2),id);return view;
+      closeView=()=>done();view=new TasksView(m,()=>tui.requestRender(),()=>done(),()=>Math.max(4,tui.terminal.rows-2),id,text=>ctx.ui.pasteToEditor(text));return view;
     },{overlay:true,overlayOptions:{width:'100%',maxHeight:'100%',row:0,col:0,margin:0}});}finally{(view as TasksView|undefined)?.dispose();view=undefined;closeView=undefined;}
   }
   async function command(args:string,ctx:ExtensionContext){

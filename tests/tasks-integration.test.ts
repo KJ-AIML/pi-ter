@@ -41,8 +41,8 @@ test('empty Tasks card opens by mouse and raw F6 without using the editor',async
  const c=registerTasks(pi,{logRoot:root});t.after(()=>c.dispose());
  await events.get('session_start')!({},ctx);
  assert.match(widget.render(80).join(''),/Tasks/);
- widget.handleMouse({type:'click',button:'left',x:4,y:1});assert.equal(opens,1);close();await sleep(0);
- assert.deepEqual(input('\x1b[17~'),{consume:true});assert.equal(opens,2);
+ widget.handleMouse({type:'click',button:'left',x:4,y:0});assert.equal(opens,0);assert.match(widget.render(80).join('\n'),/▾ Tasks/);widget.handleMouse({type:'click',button:'left',x:4,y:0});assert.match(widget.render(80).join('\n'),/▸ Tasks/);
+ assert.deepEqual(input('\x1b[17~'),{consume:true});assert.equal(opens,1);
  assert.equal(input('\x1b[17~'),undefined,'do not intercept inside overlay');close();await sleep(0);
  otherOverlay=true;assert.equal(input('\x1b[17~'),undefined);otherOverlay=false;
  assert.equal(input('t'),undefined,'ordinary typing is preserved');
@@ -59,8 +59,8 @@ test('fullscreen renderer dispatches real SGR mouse input to the Tasks card',asy
  const ctx:any={cwd:process.cwd(),hasUI:true,ui:{notify(){},onTerminalInput(fn:any){return tui.addInputListener(fn);},setWidget(_k:string,f:any){if(widget)tui.removeChild(widget);if(f){widget=f(tui);tui.addChild(widget);}},custom(factory:any){opens++;return new Promise<void>(done=>{const component=factory(tui,{}, {},()=>{overlay.hide();done();});const overlay=tui.showOverlay(component);});}}};
  const c=registerTasks(pi,{logRoot:root});t.after(async()=>{await c.dispose();tui.stop();});
  await events.get('session_start')!({},ctx);tui.start();tui.renderNow(true);
- input('\x1b[<0;5;2M');input('\x1b[<0;5;2m');
- assert.equal(opens,1,'SGR press/release should synthesize click and open overlay');
+ input('\x1b[<0;5;1M');input('\x1b[<0;5;1m');
+ assert.equal(opens,0,'card click toggles the list instead of opening the overlay');assert.match(widget.render(90).join('\n'),/▾ Tasks/);
  input('\x1b');await sleep(0);assert.equal(tui.hasOverlay(),false);
- input('\x1b[17~');assert.equal(opens,2,'F6 opens without invoking an editor shortcut');
+ input('\x1b[17~');assert.equal(opens,1,'F6 opens without invoking an editor shortcut');
 });

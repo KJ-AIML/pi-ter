@@ -2,7 +2,10 @@ import { wordmark } from './wordmark.ts';
 import { basename } from 'node:path';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
-export const accents = ['#c995f5', '#67dce5', '#92e6b3', '#f4a6ce', '#edcf83'];
+import { THEME } from './theme.ts';
+
+// One accent only; kept as a list so callers/tests that pick from it keep working.
+export const accents = [THEME.accent];
 export const paint = (hex: string, text: string) => {
   const n = parseInt(hex.slice(1), 16);
   return `\x1b[38;2;${n >> 16};${(n >> 8) & 255};${n & 255}m${text}\x1b[0m`;
@@ -31,11 +34,11 @@ export function groupSkills(skills: string[]): { label: string; items: string[] 
 
 export function workspaceLines(width: number, height: number, cwd: string, resources: Resources, accent: string, version: string, expanded = true): string[] {
   const name = basename(cwd) || cwd;
-  const muted = (s: string) => paint('#9297a6', s);
+  const muted = (s: string) => paint(THEME.muted, s);
   const title = (s: string) => paint(accent, s);
   const header = [
-    ` ${paint('#37d5d1', 'pi-ter')}  ${muted(`v${version}`)}  ·  ${paint('#eee780', `${resources.Skills.length} skills`)}  ·  ${paint('#ed91cd', `${resources.Extensions.length} extensions`)}  ·  ${paint('#63bafa', `${resources.Prompts.length} prompts`)}`,
-    ` ${muted('Type your prompt or')} / for commands  ·  ${paint('#ffb15b', '/fire')}  ·  Ctrl+O for tools`,
+    ` ${paint(THEME.text, 'pi-ter')}  ${muted(`v${version}  ·  ${resources.Skills.length} skills  ·  ${resources.Extensions.length} extensions  ·  ${resources.Prompts.length} prompts`)}`,
+    ` ${muted('Type your prompt or')} / for commands  ·  ${paint(THEME.text, '/fire')}  ·  Ctrl+O for tools`,
   ];
   if (!expanded || height < 13) return header.map(s => fit(s, width));
   const layoutWidth = Math.min(width, 148);
@@ -53,19 +56,19 @@ export function workspaceLines(width: number, height: number, cwd: string, resou
   // Reserve every resource heading before spending spare rows on examples.
   const detailed = contentBudget >= 12 + Math.max(1, groups.length);
   const preview = (items:string[], count=3) => items.slice(0,count).join(' · ') + (items.length>count ? `  +${items.length-count} more` : '');
-  right.push(heading('Skills', '#eee780'));
+  right.push(heading('Skills', THEME.text));
   for (const group of groups) {
-    right.push(`  ${paint('#d1d5df', fit(group.label, 15))} ${title(String(group.items.length).padStart(2))}${detailed ? muted(`   ${preview(group.items,2)}`) : ''}`);
+    right.push(`  ${paint(THEME.text, fit(group.label, 15))} ${title(String(group.items.length).padStart(2))}${detailed ? muted(`   ${preview(group.items,2)}`) : ''}`);
   }
   if (!groups.length) right.push(muted('   None loaded'));
-  for (const [label, color] of [['Extensions', '#cf94f3'], ['Prompts', '#63bafa'], ['Context', '#e2e4eb']] as const) {
+  for (const [label, color] of [['Extensions', THEME.text], ['Prompts', THEME.text], ['Context', THEME.text]] as const) {
     if (detailed) right.push('');
     right.push(heading(label, color));
     if (detailed) right.push(muted(`   ${preview(resources[label].map(item=>label==='Extensions'?item.replace(/^@[^/]+\//,'').replace(/:(src|dist)$/,''):item),label==='Context'?1:3) || 'None loaded'}`));
   }
   // Very short windows show totals; the resource picker still exposes all names.
   if (right.length > contentBudget) {
-    right.splice(0, right.length, ...(['Skills', 'Extensions', 'Prompts', 'Context'] as const).map(label => heading(label, '#d1d5df')));
+    right.splice(0, right.length, ...(['Skills', 'Extensions', 'Prompts', 'Context'] as const).map(label => heading(label, THEME.text)));
   }
   const contentHeight = width >= 92 ? Math.max(left.length, right.length) : right.length + 3;
   const topPad = Math.min(6, Math.max(0, Math.floor((bodyHeight - contentHeight) / 3)));
@@ -73,7 +76,7 @@ export function workspaceLines(width: number, height: number, cwd: string, resou
   for (let row = 0; row < bodyHeight; row++) {
     const i = row - topPad;
     if (width >= 92) {
-      const divider = i >= 0 && i < contentHeight ? paint('#303743','│') : ' ';
+      const divider = i >= 0 && i < contentHeight ? paint(THEME.faint,'│') : ' ';
       lines.push(`${' '.repeat(inset)}  ${fit(left[i] || '', leftWidth)}   ${divider}  ${fit(right[i] || '', rightWidth)}`);
     } else {
       const compact = [title(`WORKSPACE / ${name}`), muted(cwd), '', ...right];

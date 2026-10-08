@@ -16,6 +16,9 @@
     ],
     "prompts": [
       "./prompts"
+    ],
+    "themes": [
+      "./themes"
     ]
   },
   "devDependencies": {

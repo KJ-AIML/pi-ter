@@ -1,9 +1,12 @@
+import { spawn } from 'node:child_process';
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { activeTask, type LogEntry, type LogStream, type TaskRecord, type TaskSource } from './types.ts';
 
-const cyan = (s: string) => `\x1b[38;2;103;220;229m${s}\x1b[0m`;
-const purple = (s: string) => `\x1b[38;2;201;149;245m${s}\x1b[0m`;
-const dim = (s: string) => `\x1b[38;2;146;151;166m${s}\x1b[0m`;
+import { accent, muted, text } from '../theme.ts';
+// Neutral palette: titles in primary text, selection/active in the single accent.
+const cyan = text;
+const purple = accent;
+const dim = muted;
 const streams: Array<'all' | LogStream> = ['all', 'stdout', 'stderr', 'agent', 'tool', 'system'];
 interface DisplayLogLine { key: string; seq: number; text: string }
 
@@ -40,10 +43,18 @@ export class TasksView {
   private unsubscribe: () => void;
   private timer: ReturnType<typeof setInterval>;
 
+  private modal = false;
+  private selecting = false;
+  private sel = 0;
+  private bodyTop = 0;
+  private bodyCount = 0;
+  private dragFrom: { x: number; y: number } | undefined;
+  private dragTo: { x: number; y: number } | undefined;
   constructor(private source: TaskSource, private requestRender: () => void, private close: () => void,
-    private rows: () => number, initialId?: string) {
+    private rows: () => number, initialId?: string, private quote?: (text: string) => void) {
     this.selectedId = initialId ?? source.list()[0]?.id;
     this.mode = initialId && source.get(initialId) ? 'detail' : 'list';
+    this.modal = this.mode === 'detail';
     this.unsubscribe = source.subscribe(() => { if (!this.disposed) this.requestRender(); });
     this.timer = setInterval(() => { if (!this.disposed) this.requestRender(); }, 1000);
     this.timer.unref?.();
@@ -89,24 +100,23 @@ export class TasksView {
     return lines;
   }
 
-  private renderDetail(_width: number, height: number): string[] {
+  private renderDetail(width: number, height: number): string[] {
     const task = this.selectedId ? this.source.get(this.selectedId) : undefined;
     if (!task) return [cyan(' TASKS'), '', dim('  Task is no longer available.'), dim(' Esc back')];
     const exit = task.exitCode !== undefined ? ` · exit ${task.exitCode ?? '—'}` : '';
     const lines = [
-      `${dim(' [Back] [Close]')} ${cyan(' TASK')} ${purple(oneLine(task.title))} ${dim(`${task.status} · ${elapsed(task)}${exit}`)}`,
-      dim(` ${task.id} · ${task.kind}${task.model ? ` · ${oneLine(task.model)}` : ''}`),
-      dim(` cwd ${oneLine(task.cwd)} · path ${oneLine(task.logPath)}`),
-      dim(` cmd ${oneLine(task.command)}`),
+      `${dim(' [x]')} ${cyan(oneLine(task.title))} ${dim(`${task.status} · ${elapsed(task)}${exit}`)}`,
+      dim(` ${task.id} · ${task.kind} · cwd ${oneLine(task.cwd)} · ${oneLine(task.command)}`),
     ];
     if (task.error) lines.push(` ${purple('error')} ${oneLine(task.error)}`);
     else if (task.result) lines.push(` ${cyan('result')} ${oneLine(task.result)}`);
     if (task.dropped || task.diskTruncated) lines.push(dim(` ⚠ ${task.dropped ? `${task.dropped} live log entries dropped` : ''}${task.dropped && task.diskTruncated ? ' · ' : ''}${task.diskTruncated ? 'disk log cap reached' : ''}`));
     const footer = this.confirmStop ? purple(` Stop ${oneLine(task.title)}? y confirm · n/Esc cancel`) :
       this.searchMode ? purple(` /${safe(this.searchDraft)}█  Enter apply · Esc cancel`) :
-      dim(` w wrap:${this.wrap ? 'on' : 'off'} · f stream:${this.stream} · ↑↓/Pg scroll · End tail · / search · x stop · Esc back`);
-    const budget = Math.max(0, height - lines.length - 1);
-    const logLines = this.logLines(task, Math.max(1, _width - 3));
+      dim(` w wrap:${this.wrap ? 'on' : 'off'} · Esc:close · Enter:quote · /:search · f:filter · v:select · c:copy`);
+    const compact = height < 16;
+    const budget = Math.max(1, height - lines.length - (compact ? 3 : 6));
+    const logLines = this.logLines(task, Math.max(1, width - 4));
     if (this.scroll > 0 && this.anchor) {
       let anchored = logLines.findIndex(line => line.key === this.anchor!.key);
       if (anchored < 0) anchored = logLines.findIndex(line => line.seq >= this.anchor!.seq);
@@ -117,8 +127,58 @@ export class TasksView {
     const start = Math.max(0, end - budget);
     if (this.scroll > 0 && logLines[start]) this.anchor = { key: logLines[start].key, seq: logLines[start].seq };
     else this.anchor = undefined;
-    lines.push(...logLines.slice(start, end).map(line => ` ${line.text}`), footer);
-    return lines;
+    const body = logLines.slice(start, end);
+    // Inset the frame so it does not sit on the terminal edge or cover a side panel.
+    const marginX = !compact && width >= 48 ? 3 : 0;
+    const marginY = compact ? 0 : 1;
+    const inner = Math.max(8, width - marginX * 2);
+    const barAt = body.length ? Math.round((1 - this.scroll / Math.max(1, logLines.length)) * (body.length - 1)) : 0;
+    const close = ' [x]';
+    const top = '╭' + '─'.repeat(Math.max(0, inner - 2 - close.length)) + close + '╮';
+    const bottom = '╰' + '─'.repeat(Math.max(0, inner - 2)) + '╯';
+    const row = (content: string, bar = false) => dim('│') + fit(content, inner - 2) + (bar ? purple('▐') : dim('│'));
+    this.bodyTop = marginY + 1 + lines.length + (compact ? 0 : 1);
+    this.bodyCount = body.length;
+    const markLine = (i: number, raw: string) => {
+      const y = this.bodyTop + i;
+      const on = this.dragFrom && this.dragTo && y >= Math.min(this.dragFrom.y, this.dragTo.y) && y <= Math.max(this.dragFrom.y, this.dragTo.y);
+      const shown = on ? `\x1b[7m${raw}\x1b[27m` : raw;
+      const mark = this.selecting && i === this.sel ? purple('▸') : ' ';
+      return row(mark + shown, i === barAt);
+    };
+    const boxed = [
+      ...Array(marginY).fill(''),
+      top,
+      ...lines.map(line => row(' ' + line)),
+      ...(compact ? [] : [row('')]),
+      ...body.map((line, i) => markLine(i, line.text)),
+      bottom,
+      ...(compact ? [] : ['']),
+      footer,
+    ].map(line => ' '.repeat(marginX) + line);
+    return boxed;
+  }
+
+  private copySelection() {
+    const body = this.selectedLogText();
+    if (!body) return;
+    const cmd = process.platform === 'darwin' ? 'pbcopy' : process.platform === 'win32' ? 'clip' : 'xclip';
+    try { const child = spawn(cmd, { stdio: ['pipe', 'ignore', 'ignore'] }); child.stdin.end(body); } catch { /* clipboard optional */ }
+  }
+
+  private selectedLogText(): string {
+    const task = this.selectedId ? this.source.get(this.selectedId) : undefined;
+    if (!task) return '';
+    const lines = this.logLines(task, 200);
+    if (this.dragFrom && this.dragTo) {
+      const lo = Math.min(this.dragFrom.y, this.dragTo.y) - this.bodyTop;
+      const hi = Math.max(this.dragFrom.y, this.dragTo.y) - this.bodyTop;
+      const plain = (t: string) => t.replace(/\x1b\[[0-9;]*m/g, '');
+      return lines.slice(Math.max(0, lo), hi + 1).map(l => plain(l.text)).join('\n');
+    }
+    if (!this.selecting) return lines.map(l => l.text.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    const line = lines[Math.min(this.sel, lines.length - 1)];
+    return line ? line.text.replace(/\x1b\[[0-9;]*m/g, '') : '';
   }
 
   private logLines(task: TaskRecord, width: number): DisplayLogLine[] {
@@ -151,13 +211,18 @@ export class TasksView {
     if(event.type==='wheel'&&this.mode==='detail'){
       this.scroll=Math.max(0,this.scroll-(event.wheelDelta??0));this.anchor=undefined;this.requestRender();return {handled:true};
     }
+    if(this.mode==='detail' && (event.type==='press'||event.type==='drag'||event.type==='release') && event.button==='left'){
+      const inBody = event.y>=this.bodyTop && event.y<this.bodyTop+this.bodyCount;
+      if(event.type==='press' && inBody){ this.dragFrom={x:event.x,y:event.y}; this.dragTo={x:event.x,y:event.y}; return {handled:true,capture:true}; }
+      if(event.type==='drag' && this.dragFrom){ this.dragTo={x:event.x,y:event.y}; return {handled:true,capture:true,render:true}; }
+      if(event.type==='release' && this.dragFrom){ this.copySelection(); return {handled:true,render:true}; }
+    }
     if(event.button!=='left'||!['press','release','click'].includes(event.type))return;
     if(event.type!=='click')return {handled:true};
     if(this.confirmStop||this.searchMode)return {handled:true};
+    if(this.mode==='detail' && (event.y===0 || event.x>=event.width-6 || (event.y<=this.bodyTop && event.x<6))){ this.close(); return {handled:true}; }
     if(event.y===0){
       if(this.mode==='list'&&event.x>=1&&event.x<8)this.close();
-      else if(this.mode==='detail'&&event.x>=8&&event.x<15)this.close();
-      else if(this.mode==='detail'&&event.x>=1&&event.x<7)this.handleInput('\x1b');
     }else if(this.mode==='list'){
       const id=this.mouseRows.get(event.y);
       if(id&&this.source.get(id)){this.selectedId=id;this.mode='detail';this.search='';this.scroll=0;}
@@ -187,7 +252,7 @@ export class TasksView {
       this.requestRender(); return;
     }
     if (matchesKey(data, Key.escape)) {
-      if (this.mode === 'detail') { this.mode = 'list'; this.search = ''; this.scroll = 0; } else this.close();
+      if (this.mode === 'detail' && !this.modal) { this.mode = 'list'; this.search = ''; this.scroll = 0; } else this.close();
       this.requestRender(); return;
     }
     if (data === 'x') {
@@ -212,6 +277,9 @@ export class TasksView {
   private handleDetailInput(data: string) {
     const page = Math.max(1, this.rows() - 5);
     if (data === '/') { this.searchMode = true; this.searchDraft = this.search; }
+    else if (data === 'v') this.selecting = !this.selecting;
+    else if (data === 'c') this.copySelection();
+    else if (matchesKey(data, Key.enter)) this.quote?.(this.selectedLogText());
     else if (data === 'w') { this.wrap = !this.wrap; this.anchor = undefined; }
     else if (data === 'f') { this.stream = streams[(streams.indexOf(this.stream) + 1) % streams.length]; this.scroll = 0; this.anchor = undefined; }
     else if (matchesKey(data, Key.end)) { this.scroll = 0; this.anchor = undefined; }

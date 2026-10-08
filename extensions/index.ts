@@ -1,12 +1,20 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { registerTasks } from "./tasks/index.ts";
+import { registerToolLines } from "./tool-lines.ts";
+import { styleReply } from "./sentences.ts";
 import { awakeController } from "./awake.ts";
 import { CleanHeader } from "./clean-header.ts";
 import { CustomStatusBar } from "./status-bar.ts";
 
 export default function (pi: ExtensionAPI) {
   registerTasks(pi);
+  // Compact one-line tool rows and one-sentence-per-line replies (opt out: PITER_PLAIN_TOOLS=1 / PITER_PLAIN_REPLIES=1).
+  if (process.env.PITER_PLAIN_TOOLS !== "1") registerToolLines(pi);
+  const markdownApi = pi as unknown as { registerMarkdownTransformer?: (t: (md: string, ctx: { messageType: string }) => string) => void };
+  if (process.env.PITER_PLAIN_REPLIES !== "1" && typeof markdownApi.registerMarkdownTransformer === "function") {
+    markdownApi.registerMarkdownTransformer((markdown, ctx) => ctx.messageType === "assistant" ? styleReply(markdown) : markdown);
+  }
   const statusBar = new CustomStatusBar(pi);
   const cleanHeader = new CleanHeader(pi);
 
