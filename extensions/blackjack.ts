@@ -15,6 +15,9 @@ type GameName = "blackjack" | "poker";
 
 let bank = 100;
 
+export function getBank(): number { return bank; }
+export function setBank(val: number): void { bank = val; }
+
 function shoe(): Card[] {
   const cards = SUITS.flatMap(suit => RANKS.map(rank => ({ rank, suit })));
   for (let i = cards.length - 1; i > 0; i--) {
@@ -117,8 +120,12 @@ class Blackjack {
   private phase: "deal" | "play" | "busy" | "done" = "deal";
   private note = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private render: () => void;
 
-  constructor(private render: () => void) { this.deal(); }
+  constructor(render: () => void) {
+    this.render = render;
+    this.deal();
+  }
 
   private stop(): void {
     if (this.timer) clearTimeout(this.timer);
@@ -157,6 +164,7 @@ class Blackjack {
 
   private deal(): void {
     this.stop();
+    if (bank === 0) bank = 100;
     const stake = takeBet(10);
     this.shownYou = 0;
     this.shownDealer = 0;
@@ -350,7 +358,7 @@ function pickBots(): Bot[] {
   return names.map((name, i) => ({ name, style: styles[i], cards: [], folded: false, street: 0, stack: 80 + Math.floor(Math.random() * 121), status: "" }));
 }
 
-class Poker {
+export class Poker {
   private player: Card[] = [];
   private bots: Bot[] = [];
   private board: Card[] = [];
@@ -369,8 +377,12 @@ class Poker {
   private street: "deal" | "you" | "flop" | "turn" | "river" | "show" | "done" = "deal";
   private note = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private render: () => void;
 
-  constructor(private render: () => void) { this.deal(); }
+  constructor(render: () => void) {
+    this.render = render;
+    this.deal();
+  }
 
   private stop(): void {
     if (this.timer) clearTimeout(this.timer);
@@ -388,6 +400,7 @@ class Poker {
 
   private deal(): void {
     this.stop();
+    if (bank === 0) bank = 100;
     this.bet = takeBet(10);
     this.pot = this.bet * 4;
     this.streetBet = 0;
@@ -446,6 +459,14 @@ class Poker {
     return this.bots.filter(bot => !bot.folded).length;
   }
 
+  private canAct(seat: "you" | number): boolean {
+    return seat === "you" ? (!this.youFolded && bank > 0) : (!this.bots[seat].folded && this.bots[seat].stack > 0);
+  }
+
+  private activeActors(): Array<"you" | number> {
+    return (["you", 0, 1, 2] as Array<"you" | number>).filter(seat => this.canAct(seat));
+  }
+
   private beginStreet(label: string): void {
     this.streetBet = 0;
     this.youStreet = 0;
@@ -454,7 +475,8 @@ class Poker {
       bot.street = 0;
       if (!bot.folded) bot.status = "";
     }
-    this.pending = ["you", 0, 1, 2];
+    const actors = this.activeActors();
+    this.pending = actors.length > 1 ? actors : [];
     this.note = label;
     this.step();
   }
@@ -462,7 +484,7 @@ class Poker {
   private behind(actor: "you" | number): Array<"you" | number> {
     const order: Array<"you" | number> = ["you", 0, 1, 2];
     const at = order.indexOf(actor);
-    return [...order.slice(at + 1), ...order.slice(0, at)].filter(seat => seat === "you" ? !this.youFolded : !this.bots[seat].folded);
+    return [...order.slice(at + 1), ...order.slice(0, at)].filter(seat => this.canAct(seat));
   }
 
   private step(): void {
@@ -471,6 +493,7 @@ class Poker {
     const next = this.pending.shift();
     if (next === undefined) { this.nextStreet(); return; }
     if (next === "you") {
+      if (!this.canAct("you")) { this.step(); return; }
       const call = this.streetBet - this.youStreet;
       this.yourTurn = true;
       this.sizing = false;
@@ -512,22 +535,31 @@ class Poker {
   }
 
   private actionNote(call: number): string {
+    const toCall = Math.min(call, bank);
+    const callLabel = bank <= call ? `call ${toCall} (all-in)` : `call ${toCall}`;
     return call > 0
-      ? `f fold  c call ${call}  r raise-to  a all-in  p pot  h half`
+      ? `f fold  c ${callLabel}  r raise-to  a all-in  p pot  h half`
       : `f fold  c check  b bet  a all-in  p pot  h half`;
   }
 
   private botAct(index: number): void {
     const bot = this.bots[index];
-    if (bot.folded) { this.step(); return; }
+    if (bot.folded || bot.stack === 0) { this.step(); return; }
     this.note = `${bot.name} is thinking`;
     this.render();
     this.later(() => {
       const owe = this.streetBet - bot.street;
-      const action = this.choose(bot, owe);
-      if (action === "fold" || (owe > bot.stack && action !== "allin" && bot.stack < owe)) { bot.folded = true; bot.status = "folds"; }
-      else if (action === "check") bot.status = "checks";
-      else if (action === "call" || (action !== "allin" && bot.stack <= owe)) {
+      let action = this.choose(bot, owe);
+      const canRaiseOthers = this.behind(index).length > 0;
+      if (!canRaiseOthers && (action === "raise" || action === "allin")) {
+        action = owe === 0 ? "check" : "call";
+      }
+      if (action === "fold") {
+        bot.folded = true;
+        bot.status = "folds";
+      } else if (action === "check") {
+        bot.status = "checks";
+      } else if (action === "call" || bot.stack <= owe) {
         const paid = Math.min(owe, bot.stack);
         bot.stack -= paid;
         bot.street += paid;
@@ -631,7 +663,13 @@ class Poker {
   private pushChips(want: number, allIn: boolean): void {
     const call = Math.max(0, this.streetBet - this.youStreet);
     const paid = Math.min(allIn ? bank : want, bank);
-    if (paid === 0) { this.note = "no chips"; this.render(); return; }
+    if (paid === 0) {
+      this.yourTurn = false;
+      this.note = "all-in";
+      this.render();
+      this.later(() => this.step());
+      return;
+    }
     if (!allIn && paid < call) { this.note = `need ${call} to call`; this.render(); return; }
     const to = this.youStreet + paid;
     const raiseBy = to - this.streetBet;
@@ -664,6 +702,7 @@ class Poker {
       const to = Number(this.typed);
       const min = this.minTo();
       if (!to || to < min) { this.note = `min raise to ${min}   ${this.typed || "_"}`; this.render(); return; }
+      if (to - this.youStreet > bank) { this.note = `only have ${bank} chips   ${this.typed || "_"}`; this.render(); return; }
       this.sizing = false;
       this.pushChips(to - this.youStreet, false);
       return;
@@ -684,12 +723,13 @@ class Poker {
       const name = bot.name.padEnd(4, " ");
       return `${INK}${name}${RESET}${BG} ${cards}  ${MUTED}${bot.stack}  ${bot.status || bot.style}${RESET}`;
     });
-    const call = Math.max(0, this.streetBet - this.youStreet);
+    const call = bank > 0 ? Math.max(0, this.streetBet - this.youStreet) : 0;
+    const yoursStatus = bank === 0 && !this.youFolded && this.street !== "done" ? `  ${MUTED}all-in${RESET}` : "";
     return [
       `${LAVENDER}hold'em${RESET}${BG}  ${MUTED}bank ${bank}  pot ${this.pot}${call ? `  call ${call}` : ""}${RESET}`,
       ...seats,
       `${INK}board${RESET}${BG}  ${flop}   ${turn}   ${river}`,
-      `${INK}you${RESET}${BG}    ${yours}`,
+      `${INK}you${RESET}${BG}    ${yours}${yoursStatus}`,
       `${MUTED}${this.note}${RESET}`,
     ];
   }
@@ -698,8 +738,12 @@ class Poker {
 class Room implements Component {
   private game: Blackjack | Poker;
   private name: GameName;
+  private tui: TUI;
+  private done: () => void;
 
-  constructor(private tui: TUI, private done: () => void, start: GameName) {
+  constructor(tui: TUI, done: () => void, start: GameName) {
+    this.tui = tui;
+    this.done = done;
     this.name = start;
     this.game = start === "poker" ? new Poker(() => tui.requestRender()) : new Blackjack(() => tui.requestRender());
   }
