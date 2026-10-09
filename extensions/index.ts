@@ -6,9 +6,11 @@ import { styleReply } from "./sentences.ts";
 import { awakeController } from "./awake.ts";
 import { CleanHeader } from "./clean-header.ts";
 import { CustomStatusBar } from "./status-bar.ts";
+import { registerBlackjack } from "./blackjack.ts";
 
 export default function (pi: ExtensionAPI) {
   registerTasks(pi);
+  registerBlackjack(pi);
   // Compact one-line tool rows and one-sentence-per-line replies (opt out: PITER_PLAIN_TOOLS=1 / PITER_PLAIN_REPLIES=1).
   if (process.env.PITER_PLAIN_TOOLS !== "1") registerToolLines(pi);
   const markdownApi = pi as unknown as { registerMarkdownTransformer?: (t: (md: string, ctx: { messageType: string }) => string) => void };
@@ -23,6 +25,9 @@ export default function (pi: ExtensionAPI) {
     cleanHeader.attach(ctx);
     statusBar.attach(ctx);
     cleanHeader.startSplash();
+    const ui = ctx.ui as unknown as { setWorkingIndicator?: (o: { frames: string[]; intervalMs?: number }) => void };
+    const frames = ["♠", "♥", "♦", "♣"].map(f => `\x1b[38;2;184;168;240m${f}\x1b[39m`);
+    ui.setWorkingIndicator?.({ frames, intervalMs: 160 });
   });
 
   pi.on("input", async () => { cleanHeader.collapse(); return { action: "continue" as const }; });
