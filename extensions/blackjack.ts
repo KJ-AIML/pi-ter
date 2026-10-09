@@ -749,8 +749,4 @@ export function registerBlackjack(pi: ExtensionAPI): void {
     description: "Open the secret card table",
     handler: ctx => { void open(ctx, "blackjack"); },
   });
-  pi.registerShortcut("ctrl+alt+p", {
-    description: "Open the secret poker table",
-    handler: ctx => { void open(ctx, "poker"); },
-  });
 }
