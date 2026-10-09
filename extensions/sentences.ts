@@ -35,8 +35,35 @@ export function splitLine(line: string): string {
   return out;
 }
 
+/** Drop Pi's ``` fence chrome. A short label plus a gutter stays readable and is not a code token. */
+export function formatFences(markdown: string): string {
+  const lines = markdown.split('\n');
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const open = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)[ \t]*$/.exec(lines[i] ?? '');
+    if (!open) { out.push(lines[i] ?? ''); i++; continue; }
+    const marker = open[1][0];
+    const close = new RegExp(`^ {0,3}${marker}{${open[1].length},}[ \t]*$`);
+    const body: string[] = [];
+    i++;
+    while (i < lines.length && !close.test(lines[i] ?? '')) { body.push(lines[i] ?? ''); i++; }
+    if (i < lines.length) i++;
+    const label = open[2] || 'code';
+    // No gutter. A copied selection must be the command itself, safe to paste into a shell.
+    const show = (line: string) => {
+      if (line === '') return '  ';
+      const ticks = '`'.repeat((line.match(/`+/g) ?? []).reduce((n, s) => Math.max(n, s.length), 0) + 1);
+      const pad = ticks.length > 1 ? ' ' : '';
+      return `${ticks}${pad}${line}${pad}${ticks}  `;
+    };
+    out.push(`**${label}**`, ...body.map(show), '');
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 export function styleReply(markdown: string): string {
-  return splitSentences(markdown).replace(/^(# .+)$/gm, (_, h) => '`' + h + ' `');
+  return formatFences(splitSentences(markdown)).replace(/^(# .+)$/gm, (_, h) => '`' + h + ' `');
 }
 
 export function splitSentences(markdown: string): string {

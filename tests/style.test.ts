@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitSentences, splitLine, styleReply } from '../extensions/sentences.ts';
+import { splitSentences, splitLine, styleReply, formatFences } from '../extensions/sentences.ts';
 import { lineParts, subjectOf, clip } from '../extensions/tool-lines.ts';
 
 test('splits prose into one sentence per line', () => {
@@ -25,3 +25,13 @@ test('tool line subject', () => {
 test('h1 becomes an inline-code banner, other headings stay', () => {
   assert.equal(styleReply('# Title\n\n## Sub\n\nHello. World'), '`# Title `\n\n## Sub\n\nHello.  \nWorld');
 });
+
+test('fences lose backtick chrome and keep one line per command', () => {
+  const md = 'Run this.\n\n```bash\ncd repo\npnpm test\n```\n\nDone.';
+  const out = styleReply(md);
+  assert.doesNotMatch(out, /```/);
+  assert.match(out, /\*\*bash\*\*/);
+  assert.match(out, /`cd repo`/);
+  assert.match(out, /`pnpm test`/);
+});
+
