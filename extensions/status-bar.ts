@@ -154,11 +154,26 @@ export class CustomStatusBar {
     const branch = rawBranch && rawBranch !== "no-git" ? rawBranch : (this.gitBranchFallback || "no-git");
     const segGit = muted(branch) + (this.gitChangedCount > 0 ? ` ${text(`+${this.gitChangedCount}`)}` : "");
 
-    // Tokens vs context window
+    // Tokens: active context tokens vs context window, plus cumulative session total
     let totalInput = 0;
     let totalOutput = 0;
     let totalCacheRead = 0;
-    for (const entry of ctx.sessionManager.getBranch()) {
+    let latestContextTokens = 0;
+
+    const sessionBranch = ctx.sessionManager.getBranch();
+    for (let i = sessionBranch.length - 1; i >= 0; i--) {
+      const entry = sessionBranch[i];
+      if (entry.type === "message" && (entry.message as any)?.role === "assistant" && (entry.message as any)?.usage) {
+        const u = (entry.message as any).usage;
+        const ctxTokens = u.totalTokens || ((u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0));
+        if (ctxTokens > 0) {
+          latestContextTokens = ctxTokens;
+          break;
+        }
+      }
+    }
+
+    for (const entry of sessionBranch) {
       if (entry.type === "message" && (entry.message as any)?.usage) {
         const u = (entry.message as any).usage;
         totalInput += u.input || 0;
@@ -166,9 +181,15 @@ export class CustomStatusBar {
         totalCacheRead += u.cacheRead || 0;
       }
     }
-    const currentTokens = totalInput + totalOutput;
+
+    const sessionTotal = totalInput + totalOutput;
+    if (latestContextTokens === 0) {
+      latestContextTokens = sessionTotal;
+    }
+
     const contextLimit = ctx.model?.contextWindow || 200_000;
-    const segTokens = `${text(formatTokens(currentTokens))}${muted(` / ${formatTokens(contextLimit)}`)}`;
+    const segContext = `${text(formatTokens(latestContextTokens))}${muted(` / ${formatTokens(contextLimit)}`)}`;
+    const segTotal = muted(`total ${formatTokens(sessionTotal)}`);
 
     // Cache hit rate, else context usage
     let pct = 0;
@@ -177,7 +198,7 @@ export class CustomStatusBar {
       pct = Math.round((totalCacheRead / (totalInput + totalCacheRead)) * 100);
       label = "cache";
     } else if (contextLimit > 0) {
-      pct = Math.round((currentTokens / contextLimit) * 100);
+      pct = Math.round((latestContextTokens / contextLimit) * 100);
     }
     const segCache = muted(`${label} ${pct}%`);
 
@@ -191,13 +212,14 @@ export class CustomStatusBar {
       segMode = muted("strict");
     }
 
-    const allSegments = [segModel, segFolder, segGit, segTokens, segCache, segMode];
+    const allSegments = [segModel, segFolder, segGit, segContext, segTotal, segCache, segMode];
 
     // Responsive truncation: drop lowest-value segments first
     const tiers = [
       allSegments,
-      [segModel, segFolder, segGit, segTokens, segMode],
-      [segModel, segFolder, segGit, segMode],
+      [segModel, segFolder, segGit, segContext, segTotal, segMode],
+      [segModel, segFolder, segGit, segContext, segMode],
+      [segModel, segFolder, segContext, segMode],
       [segModel, segFolder, segMode],
     ];
     let fullLine = tiers[tiers.length - 1].join(SEP);
