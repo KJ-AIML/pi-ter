@@ -178,9 +178,10 @@ Closing the viewer does not stop work. Stop an infinite loop from Tasks when don
 | Tool | Parameters and behavior |
 | --- | --- |
 | `piter_terminal` | `command`, optional `title`, `cwd`, `shell`, `timeout`; returns task ID immediately |
-| `piter_agent` | `task`, optional `title`, `cwd`, `provider`, `model`, `role`, `access`, `tools`, `excludeTools`, `thinking`, `instructions`, `timeout`; spawns a separate Pi process |
+| `piter_agent` | `task` (one agent) or `tasks` (up to 4, started together), optional `title`, `cwd`, `provider`, `model`, `role`, `access`, `tools`, `excludeTools`, `thinking`, `instructions`, `worktree`, `continueFrom`, `timeout`; spawns separate Pi processes |
 | `piter_tasks` | No ID lists tasks; `id`, optional `after_seq`, `limit` reads logs |
-| `piter_task_wait` | `id`, optional `timeout` (seconds, default 600); waits for one task and returns its result. A waited result is not sent again as a follow-up; timing out leaves the task running |
+| `piter_task_send` | `id`, `message`, optional `mode` (`steer` default, or `followUp`); messages a running subagent |
+| `piter_task_wait` | `id` or `ids`, optional `timeout` (seconds, default 600); waits and returns the results, one combined report for several. A waited result is not sent again as a follow-up; timing out leaves the task running |
 | `piter_task_stop` | `id`; stops this session's owned task and its process tree |
 
 The panel tracks work launched through these Pi-ter tools and commands; it does not intercept terminals or subagents created by other extensions.
@@ -210,6 +211,18 @@ Subagent controls:
 | `tools` / `excludeTools` | Explicit allowlist / denylist of tool names or patterns (`--tools` / `--exclude-tools`). Deny wins, so `tools` cannot widen read-only |
 | `thinking` | `off` … `max`; defaults to the role preset, then the parent's level |
 | `instructions` | Up to 8,000 characters appended to the child's system prompt |
+| `tasks` | A batch of up to 4 agents. Top-level options are shared defaults; each entry can override them. Every entry is validated and free slots are checked first, so a batch starts completely or not at all. Collect it with `piter_task_wait` `ids` |
+| `worktree` | `true` runs the agent in a new git worktree (`.git/piter-worktrees/<id>`, branch `piter/<id>` from HEAD), so parallel writers cannot overwrite each other or your checkout. Uncommitted changes in your checkout are not copied in. The result lists commits, changed and untracked files, and review/merge/discard commands; a worktree with no changes is removed |
+| `continueFrom` | ID of a finished subagent. Resumes its saved conversation with `task` as the next message, reusing its model, role, thinking, tool limits and worktree unless overridden |
+
+Subagents run in Pi's RPC mode with a private saved session. While one runs,
+`piter_task_send` (or `/tasks send <id> <message>`) steers it: a `steer` message is
+delivered after its current tool calls and before its next model call; `followUp`
+waits until it would otherwise finish. Messages appear in the task log. A child's
+extension dialogs are cancelled automatically, since nobody can answer them.
+
+Running agents show live turns, tool calls and tokens in the Tasks list and the
+`/tasks` detail header (`3 turns · 7 tools · 12.4k`).
 
 Finished subagents report duration, turns, tokens and cost (when the provider
 reports usage). The final answer is also saved as `<task-id>.result.md` next to
