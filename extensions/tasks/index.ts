@@ -59,27 +59,24 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
         const tasks=m.list();const running=tasks.filter(activeTask);
         if(running.length&&!spin)spin=setInterval(()=>widgetRefresh?.(),120);
         if(!running.length)stopSpin();
+        shown=expanded?running.slice(-8):[];
         const count=running.length;
-        if(!count&&!expanded) return [];
-        shown=expanded?tasks.slice(-8):running.slice(-8);
         const head=paint(THEME.muted,` ${expanded?'▾':'▸'} Tasks ${count}`);
         if(!expanded)return [truncateToWidth(head,width)];
         const frame=frames[Math.floor(Date.now()/120)%frames.length];
+        const actions=' '+paint(THEME.muted,'[kill]')+' '+paint(THEME.accent,'[inspect]');
+        const actionsW=visibleWidth(actions);
         hits=[];
         const rows=shown.map(task=>{
-          const isRunning=activeTask(task);
-          const mark=paint(THEME.accent,isRunning?frame:task.status==='completed'?'✓':'✗');
+          const mark=paint(THEME.accent,frame);
           const kind=paint(THEME.accent,task.kind==='agent'?'Agent':'Run');
           const plain=cleanOutput(task.title).replace(/[\r\n]/g,' ');
           const title=paint(THEME.text,plain);
           const prefix=` ${mark} ${kind} `;
-          const actions=' '+(isRunning?paint(THEME.muted,'[kill]')+' ':'')+paint(THEME.accent,'[inspect]');
-          const actionsW=visibleWidth(actions);
           const room=Math.max(4,width-2-visibleWidth(prefix)-actionsW);
           const shownTitle=truncateToWidth(title,room,'',true);
-          const kill=isRunning?visibleWidth(prefix)+visibleWidth(shownTitle)+1:-1;
-          const inspect=isRunning?kill+7:visibleWidth(prefix)+visibleWidth(shownTitle)+1;
-          hits.push({id:task.id,kill,inspect});
+          const kill=visibleWidth(prefix)+visibleWidth(shownTitle)+1;
+          hits.push({id:task.id,kill,inspect:kill+7});
           return truncateToWidth(prefix+shownTitle+actions,Math.max(1,width-2),'');
         });
         return [truncateToWidth(head,width),...rows];
@@ -87,14 +84,12 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
         if(event.button!=='left'||!['press','click','release'].includes(event.type))return;
         if(event.type==='click'){
           const task=shown[event.y-1];
+          const right=event.width||80;
           if(!expanded||event.y<=0)expanded=!expanded;
           else if(task){
             const hit=hits[event.y-1];
-            if(hit&&hit.kill>=0&&event.x>=hit.kill&&event.x<hit.inspect&&activeTask(task)){
-              void m.stop(task.id).then(()=>widgetRefresh?.()).catch(error=>ctx.ui.notify(String(error.message||error),'error'));
-            } else {
-              launch(task.id);
-            }
+            if(hit&&event.x>=hit.inspect)launch(task.id);
+            else if(hit&&event.x>=hit.kill){void m.stop(task.id).then(()=>widgetRefresh?.()).catch(error=>ctx.ui.notify(String(error.message||error),'error'));}
           }
           widgetRefresh?.();
         }

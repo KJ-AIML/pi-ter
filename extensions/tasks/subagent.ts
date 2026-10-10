@@ -13,16 +13,12 @@ export class AgentOutput {
   consume(stream:'stdout'|'stderr',text:string):Entry[]{
     if(stream==='stderr') return [{stream,text}];
     const out:Entry[]=[];
-    this.buffer+=text;
-    let idx:number;
-    while((idx=this.buffer.indexOf('\n'))!==-1){
-      const line=this.buffer.slice(0,idx);
-      this.buffer=this.buffer.slice(idx+1);
-      if(this.overflow){if(line.length===0)this.overflow=false;continue;}
-      if(line.length>1024*1024){this.overflow=true;this.error='Subagent JSON line exceeded 1 MiB';out.push({stream:'system',text:this.error});continue;}
-      out.push(...this.decode(line));
+    for(const piece of text.split(/(?<=\n)/)){
+      if(this.overflow){if(piece.endsWith('\n'))this.overflow=false;continue;}
+      this.buffer+=piece;
+      if(this.buffer.length>1024*1024){this.buffer='';this.overflow=!piece.endsWith('\n');this.error='Subagent JSON line exceeded 1 MiB';out.push({stream:'system',text:this.error});continue;}
+      if(this.buffer.endsWith('\n')){out.push(...this.decode(this.buffer));this.buffer='';}
     }
-    if(this.buffer.length>1024*1024){this.buffer='';this.overflow=true;this.error='Subagent JSON line exceeded 1 MiB';out.push({stream:'system',text:this.error});}
     return out;
   }
   private decode(line:string):Entry[]{
