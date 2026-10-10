@@ -104,3 +104,32 @@ test('a completion withheld for a wait that gets cancelled is still delivered as
  await tools.get('piter_task_wait').execute('w',{id:r.details.id,timeout:10},abort.signal,undefined,ctx);
  assert.equal(messages.length,1,'result not lost');assert.match(messages[0].m.content,/late/);
 });
+
+test('piter_agent batches start all-or-nothing and piter_task_wait ids returns one combined report',async t=>{
+ const events=new Map<string,Function>();const tools=new Map<string,any>();const messages:any[]=[];
+ const root=mkdtempSync(join(tmpdir(),'piter-batch-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ // Isolated Pi config: the children fail fast on an unknown provider instead of using real credentials.
+ const prevDir=process.env.PI_CODING_AGENT_DIR;process.env.PI_CODING_AGENT_DIR=root;
+ t.after(()=>{if(prevDir===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=prevDir;});
+ const pi:any={on:(n:string,f:Function)=>events.set(n,f),registerTool:(v:any)=>tools.set(v.name,v),registerCommand(){},registerShortcut(){},sendMessage:(m:any,o:any)=>messages.push({m,o})};
+ const controller=registerTasks(pi,{logRoot:join(root,'logs')});t.after(()=>controller.dispose());
+ const ctx:any={cwd:process.cwd(),hasUI:false,model:{provider:'piter-none',id:'none'},ui:{}};
+ await events.get('session_start')!({},ctx);
+ const agent=tools.get('piter_agent'),wait=tools.get('piter_task_wait');const m=controller.getManager()!;
+ await assert.rejects(agent.execute('x',{},undefined,undefined,ctx),/Give task \(one agent\) or tasks/);
+ await assert.rejects(agent.execute('x',{task:'a',tasks:[{task:'b'}]},undefined,undefined,ctx),/not both/);
+ await assert.rejects(agent.execute('x',{tasks:[{task:'ok'},{task:'bad',thinking:'turbo'}]},undefined,undefined,ctx),/tasks\[1\].*thinking/);
+ assert.equal(m.list().length,0,'an invalid entry starts nothing');
+ const sleeper=process.platform==='win32'?'Start-Sleep -Seconds 20':'sleep 20';
+ const busy=[];for(let i=0;i<3;i++)busy.push((await tools.get('piter_terminal').execute('t',{command:sleeper},undefined,undefined,ctx)).details.id);
+ await assert.rejects(agent.execute('x',{tasks:[{task:'a'},{task:'b'}]},undefined,undefined,ctx),/needs 2 free slots; 1 available.*Nothing was started/);
+ assert.equal(m.list().length,3);
+ for(const id of busy)await m.stop(id);
+ const r=await agent.execute('x',{role:'scout',tasks:[{task:'Review A',title:'A'},{task:'Review B',title:'B',role:'reviewer'}]},undefined,undefined,ctx);
+ assert.equal(r.details.ids.length,2);assert.match(r.content[0].text,/Started 2 subagents[\s\S]*A · piter-none\/none · read-only[\s\S]*B · /);
+ const sent=messages.length;
+ const report=await wait.execute('w',{ids:r.details.ids,timeout:60},undefined,undefined,ctx);
+ assert.match(report.content[0].text,/^2\/2 tasks finished[\s\S]*### 1\. A[\s\S]*### 2\. B/);
+ assert.equal(report.details.tasks.length,2);
+ await sleep(50);assert.equal(messages.length,sent,'batch results are not repeated as follow-ups');
+});

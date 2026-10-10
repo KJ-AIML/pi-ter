@@ -33,6 +33,8 @@ export class TaskManager {
     mkdirSync(options.logDir,{recursive:true,mode:0o700});
   }
   list(): TaskRecord[] { return [...this.tasks.values()]; }
+  /** Free concurrency slots, so callers can admit a batch all-or-nothing. */
+  available(): number { return this.closed?0:Math.max(0,this.maxConcurrent-this.list().filter(activeTask).length); }
   get(id:string): TaskRecord | undefined { return this.tasks.get(id); }
   subscribe(listener:()=>void):()=>void { this.listeners.add(listener); return ()=>{this.listeners.delete(listener);}; }
   onComplete(listener:(task:TaskRecord)=>void):()=>void { this.completions.add(listener); return ()=>{this.completions.delete(listener);}; }
