@@ -82,11 +82,26 @@ export function toolArgs(options:{access?:AgentAccess;tools?:string[];excludeToo
   const exclude=[...new Set([...deny,...(readOnly?READ_ONLY_DENY:[])])];
   return [...(tools.length?['--tools',tools.join(',')]:[]),...(exclude.length?['--exclude-tools',exclude.join(',')]:[])];
 }
-export function agentLaunch(options:{task:string;title:string;cwd:string;provider:string;model:string;thinking?:string;timeoutMs?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[]}):LaunchSpec{
-  const limits=toolArgs(options);const parser=new AgentOutput();const invocation=piInvocation();
+export const THINKING_LEVELS=['off','minimal','low','medium','high','xhigh','max'] as const;
+export type AgentRole='scout'|'reviewer'|'worker';
+/** Role presets are defaults only; explicit access/thinking/instructions from the caller win. */
+export const ROLES:Record<AgentRole,{access:AgentAccess;thinking?:string;prompt:string}>={
+  scout:{access:'read-only',thinking:'low',prompt:'You are a fast reconnaissance subagent. Inspect only what the task needs and do not modify anything. Return compressed, evidence-backed findings with file paths and line references, then list open questions.'},
+  reviewer:{access:'read-only',thinking:'high',prompt:'You are a code reviewer subagent. Do not modify anything. Verify claims against the code, report findings ordered by severity with file:line evidence, and separate confirmed defects from suspicions.'},
+  worker:{access:'full',prompt:'You are an implementation subagent. Make the smallest change that completes the task, stay inside the stated scope, run the relevant checks, and finish with the files changed, verification results and residual risks.'},
+};
+export const MAX_INSTRUCTIONS=8000;
+export function agentLaunch(options:{task:string;title:string;cwd:string;provider:string;model:string;thinking?:string;timeoutMs?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[];role?:AgentRole;instructions?:string;parentThinking?:string}):LaunchSpec{
+  const role=options.role?ROLES[options.role]:undefined;if(options.role&&!role)throw new Error(`Unknown role: ${options.role}`);
+  const thinking=options.thinking??role?.thinking??options.parentThinking;
+  if(thinking&&!(THINKING_LEVELS as readonly string[]).includes(thinking))throw new Error(`Unknown thinking level: ${thinking}`);
+  const extra=options.instructions?.trim()??'';if(extra.length>MAX_INSTRUCTIONS)throw new Error(`instructions exceed ${MAX_INSTRUCTIONS} characters`);
+  // The heading keeps the value multi-line so Pi never mistakes it for a file path.
+  const prompt=[role&&`## Subagent role: ${options.role}\n${role.prompt}`,extra&&`## Subagent instructions\n${extra}`].filter(Boolean).join('\n\n');
+  const limits=toolArgs({...options,access:options.access??role?.access});const parser=new AgentOutput();const invocation=piInvocation();
   return {
     kind:'agent',title:options.title,cwd:options.cwd,command:'Pi subagent',model:`${options.provider}/${options.model}`,
-    executable:invocation.executable,args:[...invocation.args,'--mode','json','--print','--no-session','--provider',options.provider,'--model',options.model,...(options.thinking?['--thinking',options.thinking]:[]),...limits],
+    executable:invocation.executable,args:[...invocation.args,'--mode','json','--print','--no-session','--provider',options.provider,'--model',options.model,...(thinking?['--thinking',thinking]:[]),...limits,...(prompt?['--append-system-prompt',prompt]:[])],
     input:options.task,env:{...process.env,PITER_SUBAGENT:'1',PI_SPLASH:'0'},timeoutMs:options.timeoutMs,
     transform:(stream,text)=>parser.consume(stream,text),summarize:()=>parser.summary(),
   };

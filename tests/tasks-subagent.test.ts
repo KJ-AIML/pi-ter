@@ -26,3 +26,15 @@ test('tool access options map to enforced Pi CLI flags and reject injection',asy
  assert.throws(()=>toolArgs({access:'admin' as any}),/Unknown access/);
  const s=agentLaunch({task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m',access:'read-only'});assert.ok(s.args.includes('--exclude-tools'));
 });
+test('role presets set access, thinking and prompt; explicit options win',()=>{
+ const base={task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m'};
+ const flag=(args:string[],name:string)=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
+ const scout=agentLaunch({...base,role:'scout',parentThinking:'high'}).args;
+ assert.equal(flag(scout,'--thinking'),'low');assert.equal(flag(scout,'--tools'),'read,grep,find,ls');assert.match(flag(scout,'--append-system-prompt')!,/Subagent role: scout/);
+ const custom=agentLaunch({...base,role:'scout',access:'full',thinking:'medium',instructions:'Report in Thai.'}).args;
+ assert.equal(flag(custom,'--thinking'),'medium');assert.equal(flag(custom,'--tools'),undefined);assert.match(flag(custom,'--append-system-prompt')!,/scout[\s\S]*Report in Thai\./);
+ const worker=agentLaunch({...base,role:'worker',parentThinking:'xhigh'}).args;assert.equal(flag(worker,'--thinking'),'xhigh');assert.equal(flag(worker,'--exclude-tools'),undefined);
+ const plain=agentLaunch({...base,parentThinking:'minimal'}).args;assert.equal(flag(plain,'--append-system-prompt'),undefined);assert.equal(flag(plain,'--thinking'),'minimal');
+ const only=agentLaunch({...base,instructions:'README.md'}).args;assert.match(flag(only,'--append-system-prompt')!,/\n/,'never a bare path');
+ assert.throws(()=>agentLaunch({...base,thinking:'turbo'}),/thinking/);assert.throws(()=>agentLaunch({...base,role:'boss' as any}),/role/);assert.throws(()=>agentLaunch({...base,instructions:'x'.repeat(8001)}),/instructions/);
+});

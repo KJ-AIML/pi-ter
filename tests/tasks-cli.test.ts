@@ -39,11 +39,11 @@ test('real Pi CLI child uses configured provider, streams tool activity and retu
  assert.ok(requests[1].messages.some((m:any)=>m.role==='tool'&&JSON.stringify(m.content).includes('fixture file content')));
 });
 
-test('read-only access is enforced by the real Pi CLI tool list', {timeout:45000}, async t=>{
- const dir=mkdtempSync(join(tmpdir(),'piter-cli-ro-'));let offered:string[]|undefined;
+test('scout role is read-only and its prompt reaches the real Pi CLI', {timeout:45000}, async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'piter-cli-ro-'));let offered:string[]|undefined;let system='';
  const server=createServer((req,res)=>{let body='';req.on('data',c=>{body+=c;});req.on('end',()=>{
   if(!req.url?.includes('chat/completions')){res.writeHead(404);res.end();return;}
-  offered??=(JSON.parse(body).tools||[]).map((v:any)=>v.function.name);
+  const input=JSON.parse(body);offered??=(input.tools||[]).map((v:any)=>v.function.name);system||=JSON.stringify(input.messages.filter((m:any)=>m.role==='system'||m.role==='developer'));
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   res.write(`data: ${JSON.stringify({id:'f',object:'chat.completion.chunk',created:1,model:'fixture-model',choices:[{index:0,delta:{role:'assistant',content:'ok'},finish_reason:'stop'}]})}\n\n`);res.end('data: [DONE]\n\n');});});
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as any).port;
@@ -51,11 +51,12 @@ test('read-only access is enforced by the real Pi CLI tool list', {timeout:45000
  writeFileSync(join(dir,'settings.json'),JSON.stringify({packages:[resolve('.')],quietStartup:true}));
  const manager=new TaskManager({logDir:join(dir,'logs')});
  t.after(async()=>{await manager.dispose();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});});
- const spec=agentLaunch({task:'Say ok.',title:'RO',cwd:dir,provider:'piter-fixture',model:'fixture-model',thinking:'off',access:'read-only',timeoutMs:35000});
+ const spec=agentLaunch({task:'Say ok.',title:'RO',cwd:dir,provider:'piter-fixture',model:'fixture-model',thinking:'off',role:'scout',instructions:'Answer with MARKER-ROLE-123 style.',timeoutMs:35000});
  spec.env={...spec.env,PI_CODING_AGENT_DIR:dir};const task=manager.start(spec);
  await new Promise<void>(r=>{const p=setInterval(()=>{if(!['starting','running','stopping'].includes(task.status)){clearInterval(p);r();}},30);});
  assert.equal(task.status,'completed',task.logs.map(l=>l.text).join(''));
  assert.ok(offered?.length,'model was offered tools');
  for(const name of offered!)assert.ok(['read','grep','find','ls'].includes(name),`unexpected tool offered: ${name}`);
+ assert.match(system,/Subagent role: scout/);assert.match(system,/MARKER-ROLE-123/);
  assert.ok(!offered!.includes('bash')&&!offered!.includes('write')&&!offered!.includes('edit'));
 });
