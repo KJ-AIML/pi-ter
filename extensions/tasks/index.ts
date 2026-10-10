@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type } from 'typebox';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
@@ -9,6 +9,7 @@ import { activeTask, type TaskRecord } from './types.ts';
 import { terminalLaunch, type ShellKind } from './process.ts';
 import { agentLaunch, latestSession, MAX_INSTRUCTIONS, ROLES, THINKING_LEVELS, type AgentAccess, type AgentRole } from './subagent.ts';
 import { TasksView } from './view.ts';
+import { createWorktree, finishWorktree, sourceDirty, type AgentWorktree } from './worktree.ts';
 import { renderTaskWidget, visibleTasks, type Paint } from './widget.ts';
 
 const toolNamesSchema=(description:string)=>Type.Optional(Type.Array(Type.String({minLength:1,maxLength:100}),{maxItems:64,description}));
@@ -103,7 +104,7 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     const task=ensure(ctx).start({kind:'terminal',title:params.title||params.command.slice(0,80),cwd:directory(ctx,params.cwd),command:params.command,...launch,timeoutMs:params.timeout===undefined?undefined:params.timeout*1000});
     return response(`Started background terminal ${task.id}. Use /tasks to watch it. A completion message will arrive automatically.`,summary(task));
   }
-  type AgentParams={task:string;title?:string;cwd?:string;provider?:string;model?:string;timeout?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[];role?:AgentRole;thinking?:string;instructions?:string;continueFrom?:string};
+  type AgentParams={task:string;title?:string;cwd?:string;provider?:string;model?:string;timeout?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[];role?:AgentRole;thinking?:string;instructions?:string;continueFrom?:string;worktree?:boolean};
   /** Validate one agent request and build its launch spec without starting anything. */
   function agentSpec(params:AgentParams,ctx:ExtensionContext){
     if(!params.task?.trim())throw new Error('Subagent task is required');
@@ -118,22 +119,37 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
       if(m.list().some(t=>activeTask(t)&&t.agent?.sessionDir===prev.agent!.sessionDir))throw new Error(`Session of ${prev.id} is already being continued`);
       sessionFile=latestSession(prev.agent.sessionDir);
       if(!sessionFile)throw new Error(`Task ${prev.id} saved no session (it may have failed before its first turn)`);
-      base=prev.agent.options;sessionDir=prev.agent.sessionDir;title??=`↻ ${prev.title.replace(/^↻ /,'')}`.slice(0,200);
+      base=prev.agent.options;sessionDir=prev.agent.sessionDir;
+      if(typeof base.cwd==='string'&&!existsSync(base.cwd))throw new Error(`Task ${prev.id}'s working folder no longer exists${base.worktree?' (its worktree had no changes and was removed)':''}; start a new agent instead`);
+      title??=`↻ ${prev.title.replace(/^↻ /,'')}`.slice(0,200);
     }else{sessionDir=join(m.logDir,'sessions',randomUUID());}
     const pick=<T,>(value:T|undefined,key:string)=>value!==undefined?value:base[key] as T|undefined;
     const provider=pick(params.provider,'provider')||ctx.model?.provider;const model=pick(params.model,'model')||ctx.model?.id;
     if(!provider||!model)throw new Error('Select a parent model or specify provider and model');
+    if(params.worktree&&params.continueFrom&&!base.worktree)throw new Error('worktree cannot be added when continuing a run that did not use one');
+    let cwd:string=params.cwd!==undefined?directory(ctx,params.cwd):base.cwd??directory(ctx);
+    // A continued worktree run keeps its worktree; a new one gets a fresh worktree.
+    let worktree:AgentWorktree|undefined=base.worktree;let dirtyNote='';
+    if(params.worktree&&!worktree){worktree=createWorktree(cwd,randomUUID().slice(0,8));cwd=worktree.cwd;if(sourceDirty(worktree.repo))dirtyNote=' Note: the source checkout has uncommitted changes that the worktree does not include.';}
     mkdirSync(sessionDir,{recursive:true,mode:0o700});
-    const spec=agentLaunch({task:params.task,title:title||params.task.slice(0,80),cwd:params.cwd!==undefined?directory(ctx,params.cwd):base.cwd??directory(ctx),provider,model,thinking:pick(params.thinking,'thinking'),parentThinking:ctx.thinkingLevel,role:pick(params.role,'role'),instructions:pick(params.instructions,'instructions'),access:pick(params.access,'access'),tools:pick(params.tools,'tools'),excludeTools:pick(params.excludeTools,'excludeTools'),timeoutMs:params.timeout===undefined?undefined:params.timeout*1000,sessionDir,sessionFile});
+    let spec;
+    try{spec=agentLaunch({task:params.task,title:title||params.task.slice(0,80),cwd,provider,model,thinking:pick(params.thinking,'thinking'),parentThinking:ctx.thinkingLevel,role:pick(params.role,'role'),instructions:pick(params.instructions,'instructions'),access:pick(params.access,'access'),tools:pick(params.tools,'tools'),excludeTools:pick(params.excludeTools,'excludeTools'),timeoutMs:params.timeout===undefined?undefined:params.timeout*1000,sessionDir,sessionFile});}
+    catch(error){if(worktree&&!base.worktree)finishWorktree(worktree);throw error;}
+    if(worktree){
+      const w=worktree;const summarize=spec.summarize;spec.agent!.options.worktree=w;
+      // Report the branch, commits and changed files with the agent's result.
+      spec.summarize=()=>{const s=summarize?.()??{};const report=finishWorktree(w).text;return {...s,result:s.result?`${s.result}\n\n${report}`:report};};
+    }
     // Undefined fields must not erase the continued run's settings.
     params={...base,...Object.fromEntries(Object.entries(params).filter(([,v])=>v!==undefined))} as AgentParams;
     const access=params.access??(params.role?ROLES[params.role].access:'full');
     const limits=access==='read-only'?'read-only':params.tools?.length||params.excludeTools?.length?'restricted tools':'full access';
-    return {spec,label:`${provider}/${model}`,limits};
+    return {spec,label:`${provider}/${model}`,limits:worktree?`${limits}, worktree ${worktree.branch}`:limits,worktree:params.worktree&&!base.worktree?worktree:undefined,dirtyNote};
   }
   function runAgent(params:AgentParams,ctx:ExtensionContext){
-    const {spec,label,limits}=agentSpec(params,ctx);const task=ensure(ctx).start(spec);
-    const note=limits==='read-only'?' Tool access is read-only (read/grep/find/ls; no bash, edits or MCP).':limits==='restricted tools'?' Tool access is restricted.':'';
+    if(!ensure(ctx).available())throw new Error('Task concurrency limit (4) reached');
+    const {spec,label,limits,dirtyNote}=agentSpec(params,ctx);const task=ensure(ctx).start(spec);
+    const note=(limits.startsWith('read-only')?' Tool access is read-only (read/grep/find/ls; no bash, edits or MCP).':limits.startsWith('restricted tools')?' Tool access is restricted.':'')+(spec.agent?.options.worktree?` It works in its own git worktree on branch ${(spec.agent.options.worktree as AgentWorktree).branch}; the result will list its changes.${dirtyNote}`:'');
     return response(`Started subagent ${task.id} using ${label}.${note} It has its own context and uses the specified task plus project instructions. Completion will be delivered automatically.`,summary(task));
   }
   /** Start several agents at once; per-task fields override the shared top-level defaults. All start or none do. */
@@ -142,8 +158,10 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     const resumed=items.map(i=>i.continueFrom??shared.continueFrom).filter(Boolean);
     if(new Set(resumed).size<resumed.length)throw new Error('A batch cannot continue the same task twice');
     const m=ensure(ctx);
-    const prepared=items.map((item,i)=>{try{return agentSpec({...shared,...item} as AgentParams,ctx);}catch(error:any){throw new Error(`tasks[${i}]: ${error.message}`);}});
-    if(prepared.length>m.available())throw new Error(`Batch of ${prepared.length} needs ${prepared.length} free slots; ${m.available()} available (limit 4 running tasks). Nothing was started.`);
+    if(items.length>m.available())throw new Error(`Batch of ${items.length} needs ${items.length} free slots; ${m.available()} available (limit 4 running tasks). Nothing was started.`);
+    const prepared:ReturnType<typeof agentSpec>[]=[];
+    try{items.forEach((item,i)=>{try{prepared.push(agentSpec({...shared,...item} as AgentParams,ctx));}catch(error:any){throw new Error(`tasks[${i}]: ${error.message}`);}});}
+    catch(error){for(const p of prepared)if(p.worktree)finishWorktree(p.worktree);throw error;}
     const started=prepared.map(p=>({task:m.start(p.spec),...p}));
     const lines=started.map(({task,label,limits})=>`- ${task.id} · ${task.title} · ${label} · ${limits}`);
     const ids=started.map(s=>s.task.id);
@@ -183,7 +201,7 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     pi.registerShortcut('ctrl+alt+t',{description:'Open Pi-ter Tasks',handler:ctx=>open(ctx)});
     pi.registerTool({name:'piter_terminal',label:'Background terminal',description:'Run a shell command in the background while continuing other work. Returns a task ID immediately; completion arrives automatically. Captures stdout/stderr; no interactive stdin/PTY. Windows defaults to PowerShell, POSIX to sh. Use for servers, watches and long-running jobs.',parameters:Type.Object({command:Type.String({minLength:1,maxLength:32000}),title:Type.Optional(Type.String({maxLength:200})),cwd:Type.Optional(Type.String()),shell:Type.Optional(Type.Union(['auto','powershell','cmd','bash','sh'].map(s=>Type.Literal(s)))),timeout:timeoutSchema}),async execute(_id,params,signal,_update,ctx){if(signal?.aborted)throw new Error('Request aborted before launch');return runTerminal(params,ctx);}});
     // Fields one agent can set; reused for each entry of a batch.
-    const agentFields={title:Type.Optional(Type.String({maxLength:200})),cwd:Type.Optional(Type.String()),provider:Type.Optional(Type.String()),model:Type.Optional(Type.String()),access:Type.Optional(Type.Union([Type.Literal('full'),Type.Literal('read-only')],{description:'full (default) inherits all tools; read-only is enforced by Pi tool selection'})),tools:toolNamesSchema('Allowlist of tool names/patterns; replaces the default or read-only set'),excludeTools:toolNamesSchema('Denylist of tool names/patterns; always applied'),role:Type.Optional(Type.Union((Object.keys(ROLES) as AgentRole[]).map(r=>Type.Literal(r)),{description:'Preset for access, thinking and a role system prompt'})),thinking:Type.Optional(Type.Union(THINKING_LEVELS.map(l=>Type.Literal(l)),{description:'Child thinking level; default role preset, else the parent level'})),instructions:Type.Optional(Type.String({maxLength:MAX_INSTRUCTIONS,description:'Extra system-prompt text for the child (role, constraints, output format)'})),timeout:timeoutSchema,continueFrom:Type.Optional(Type.String({description:'ID of a finished subagent to continue: resumes its saved conversation with this task as the next message, reusing its model, role and tool limits unless overridden'}))};
+    const agentFields={title:Type.Optional(Type.String({maxLength:200})),cwd:Type.Optional(Type.String()),provider:Type.Optional(Type.String()),model:Type.Optional(Type.String()),access:Type.Optional(Type.Union([Type.Literal('full'),Type.Literal('read-only')],{description:'full (default) inherits all tools; read-only is enforced by Pi tool selection'})),tools:toolNamesSchema('Allowlist of tool names/patterns; replaces the default or read-only set'),excludeTools:toolNamesSchema('Denylist of tool names/patterns; always applied'),role:Type.Optional(Type.Union((Object.keys(ROLES) as AgentRole[]).map(r=>Type.Literal(r)),{description:'Preset for access, thinking and a role system prompt'})),thinking:Type.Optional(Type.Union(THINKING_LEVELS.map(l=>Type.Literal(l)),{description:'Child thinking level; default role preset, else the parent level'})),instructions:Type.Optional(Type.String({maxLength:MAX_INSTRUCTIONS,description:'Extra system-prompt text for the child (role, constraints, output format)'})),timeout:timeoutSchema,worktree:Type.Optional(Type.Boolean({description:'Run in a new git worktree on branch piter/<id> from HEAD, so parallel writers cannot overwrite each other or your checkout. The result lists commits and changed files; unchanged worktrees are removed'})),continueFrom:Type.Optional(Type.String({description:'ID of a finished subagent to continue: resumes its saved conversation with this task as the next message, reusing its model, role and tool limits unless overridden'}))};
     pi.registerTool({name:'piter_agent',label:'Spawn subagent',description:'Delegate bounded work to separate Pi processes with isolated context. Give either task (one agent) or tasks (a batch of up to 4 started together, all-or-nothing; top-level fields are defaults each entry can override). Returns task IDs immediately; progress is visible in /tasks and completion arrives automatically, or collect a batch with piter_task_wait ids. Inherits current provider/model by default, environment and installed Pi configuration. Supply full task context; parent chat is not automatically copied. Agents share cwd files; assign disjoint writes. Subagents cannot recursively use Pi-ter task tools. Use access "read-only" for recon/review: Pi enforces read/grep/find/ls only (no bash, edits or MCP). tools/excludeTools set an explicit allowlist/denylist. role presets: scout (read-only, low thinking), reviewer (read-only, high thinking), worker (full); explicit access/thinking override the preset. instructions are appended to the child system prompt.',parameters:Type.Object({task:Type.Optional(Type.String({minLength:1,maxLength:64000,description:'Work for a single agent'})),tasks:Type.Optional(Type.Array(Type.Object({task:Type.String({minLength:1,maxLength:64000}),...agentFields}),{minItems:1,maxItems:4,description:'Batch of agents started together'})),...agentFields}),async execute(_id,params,signal,_update,ctx){
       if(signal?.aborted)throw new Error('Request aborted before launch');
       const {task,tasks,...shared}=params;

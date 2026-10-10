@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync,writeFileSync,rmSync,readFileSync } from 'node:fs';
+import { mkdtempSync,writeFileSync,rmSync,readFileSync,existsSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TaskManager } from '../extensions/tasks/manager.ts';
@@ -100,4 +100,33 @@ test('real Pi CLI child accepts steering mid-run and can be continued after it f
  const history=JSON.stringify(requests[before].messages);
  assert.match(history,/STEER-MARKER/);assert.match(history,/CONTINUE-MARKER/);assert.match(history,/answer-2/,'previous conversation was resumed');
  const offered=requests[before].tools.map((v:any)=>v.function.name);assert.ok(!offered.includes('bash'),'continued run keeps the scout tool limits');
+});
+
+test('worktree writer edits only its own worktree and the result lists the change', {timeout:60000}, async t=>{
+ const {registerTasks}=await import('../extensions/tasks/index.ts');const {tempRepo}=await import('./helpers/git.ts');
+ const dir=mkdtempSync(join(tmpdir(),'piter-cli-wt-'));const repo=tempRepo(t);const requests:any[]=[];
+ const server=createServer((req,res)=>{let body='';req.on('data',c=>{body+=c;});req.on('end',()=>{
+  if(!req.url?.includes('chat/completions')){res.writeHead(404);res.end();return;}
+  requests.push(JSON.parse(body));res.writeHead(200,{'Content-Type':'text/event-stream'});
+  const send=(delta:any,finish:string|null=null)=>res.write(`data: ${JSON.stringify({id:'f',object:'chat.completion.chunk',created:1,model:'fixture-model',choices:[{index:0,delta,finish_reason:finish}]})}\n\n`);
+  if(requests.length===1){send({role:'assistant',content:''});send({tool_calls:[{index:0,id:'w1',type:'function',function:{name:'write',arguments:JSON.stringify({path:'agent-output.txt',content:'from agent\n'})}}]});send({},'tool_calls');}
+  else send({role:'assistant',content:'Wrote the file.'}),send({},'stop');
+  res.end('data: [DONE]\n\n');});});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as any).port;
+ writeFileSync(join(dir,'models.json'),JSON.stringify({providers:{'piter-fixture':{baseUrl:`http://127.0.0.1:${port}/v1`,api:'openai-completions',apiKey:'fixture',models:[{id:'fixture-model',reasoning:false,input:['text'],contextWindow:32000,maxTokens:1024}]}}}));
+ writeFileSync(join(dir,'settings.json'),JSON.stringify({packages:[resolve('.')],quietStartup:true}));
+ const prev=process.env.PI_CODING_AGENT_DIR;process.env.PI_CODING_AGENT_DIR=dir;
+ const events=new Map<string,Function>();const tools=new Map<string,any>();
+ const pi:any={on:(n:string,f:Function)=>events.set(n,f),registerTool:(v:any)=>tools.set(v.name,v),registerCommand(){},registerShortcut(){},sendMessage(){}};
+ const controller=registerTasks(pi,{logRoot:join(dir,'logs')});
+ t.after(async()=>{await controller.dispose();if(prev===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=prev;server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});});
+ const ctx:any={cwd:repo,hasUI:false,model:{provider:'piter-fixture',id:'fixture-model'},thinkingLevel:'off',ui:{}};
+ await events.get('session_start')!({},ctx);
+ const started=await tools.get('piter_agent').execute('a',{task:'Write agent-output.txt',role:'worker',worktree:true},undefined,undefined,ctx);
+ assert.match(started.content[0].text,/own git worktree on branch piter\//);
+ const done=await tools.get('piter_task_wait').execute('w',{id:started.details.id,timeout:40},undefined,undefined,ctx);
+ assert.equal(done.details.status,'completed',done.content[0].text);
+ assert.match(done.content[0].text,/Wrote the file\.[\s\S]*Worktree: branch piter\/[\s\S]*Untracked: agent-output\.txt/);
+ assert.ok(!existsSync(join(repo,'agent-output.txt')),'source checkout untouched');
+ const wt=/at (\S+piter-worktrees\S+)/.exec(done.content[0].text)![1];assert.ok(existsSync(join(wt,'agent-output.txt')));
 });
