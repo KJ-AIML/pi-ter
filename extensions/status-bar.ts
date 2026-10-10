@@ -25,6 +25,26 @@ function formatTokens(count: number): string {
   return `${m.endsWith(".0") ? m.slice(0, -2) : m}M`;
 }
 
+export interface UsageTotals { input: number; output: number; cacheRead: number; latestContext: number }
+
+/** Sum message usage over a session branch; latestContext is the newest assistant message's context size. */
+export function usageTotals(branch: readonly any[]): UsageTotals {
+  const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, latestContext: 0 };
+  for (const entry of branch) {
+    const message = entry?.type === "message" ? entry.message : undefined;
+    const u = message?.usage;
+    if (!u) continue;
+    totals.input += u.input || 0;
+    totals.output += u.output || 0;
+    totals.cacheRead += u.cacheRead || 0;
+    if (message.role === "assistant") {
+      const ctxTokens = u.totalTokens || ((u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0));
+      if (ctxTokens > 0) totals.latestContext = ctxTokens;
+    }
+  }
+  return totals;
+}
+
 export interface StatusBarOptions {
   enabled?: boolean;
 }
@@ -36,6 +56,8 @@ export class CustomStatusBar {
   private gitBranchFallback = "";
   private lastGitCheck = 0;
   private currentTui: any = null;
+  // Renders run every spinner frame; only re-sum usage when the branch actually changes.
+  private usageCache?: { length: number; last: unknown; totals: UsageTotals };
 
   constructor(pi: ExtensionAPI, options: StatusBarOptions = {}) {
     this.pi = pi;
@@ -54,26 +76,16 @@ export class CustomStatusBar {
     this.lastGitCheck = now;
 
     try {
-      // 1. Try local git in cwd
+      // Only the session's own cwd; outside a git repo there is nothing to show.
       const res = await this.pi.exec("git", ["status", "--porcelain"], { timeout: 2000 });
       if (res && res.code === 0 && typeof res.stdout === "string") {
         const lines = res.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
         this.gitChangedCount = lines.length;
         const bRes = await this.pi.exec("git", ["branch", "--show-current"], { timeout: 1500 });
-        if (bRes && bRes.code === 0 && bRes.stdout.trim()) {
-          this.gitBranchFallback = bRes.stdout.trim();
-        }
+        this.gitBranchFallback = bRes && bRes.code === 0 ? bRes.stdout.trim() : "";
       } else {
-        // 2. Fallback to target repo under repos/pi-ter
-        const targetRes = await this.pi.exec("git", ["-C", "repos/pi-ter", "status", "--porcelain"], { timeout: 2000 });
-        if (targetRes && targetRes.code === 0 && typeof targetRes.stdout === "string") {
-          const lines = targetRes.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
-          this.gitChangedCount = lines.length;
-          const targetBranch = await this.pi.exec("git", ["-C", "repos/pi-ter", "branch", "--show-current"], { timeout: 1500 });
-          if (targetBranch && targetBranch.code === 0 && targetBranch.stdout.trim()) {
-            this.gitBranchFallback = targetBranch.stdout.trim();
-          }
-        }
+        this.gitChangedCount = 0;
+        this.gitBranchFallback = "";
       }
     } catch {
       // ignore
@@ -155,32 +167,13 @@ export class CustomStatusBar {
     const segGit = muted(branch) + (this.gitChangedCount > 0 ? ` ${text(`+${this.gitChangedCount}`)}` : "");
 
     // Tokens: active context tokens vs context window, plus cumulative session total
-    let totalInput = 0;
-    let totalOutput = 0;
-    let totalCacheRead = 0;
-    let latestContextTokens = 0;
-
     const sessionBranch = ctx.sessionManager.getBranch();
-    for (let i = sessionBranch.length - 1; i >= 0; i--) {
-      const entry = sessionBranch[i];
-      if (entry.type === "message" && (entry.message as any)?.role === "assistant" && (entry.message as any)?.usage) {
-        const u = (entry.message as any).usage;
-        const ctxTokens = u.totalTokens || ((u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0));
-        if (ctxTokens > 0) {
-          latestContextTokens = ctxTokens;
-          break;
-        }
-      }
+    const last = sessionBranch[sessionBranch.length - 1];
+    if (!this.usageCache || this.usageCache.length !== sessionBranch.length || this.usageCache.last !== last) {
+      this.usageCache = { length: sessionBranch.length, last, totals: usageTotals(sessionBranch) };
     }
-
-    for (const entry of sessionBranch) {
-      if (entry.type === "message" && (entry.message as any)?.usage) {
-        const u = (entry.message as any).usage;
-        totalInput += u.input || 0;
-        totalOutput += u.output || 0;
-        totalCacheRead += u.cacheRead || 0;
-      }
-    }
+    const { input: totalInput, output: totalOutput, cacheRead: totalCacheRead } = this.usageCache.totals;
+    let latestContextTokens = this.usageCache.totals.latestContext;
 
     const sessionTotal = totalInput + totalOutput;
     if (latestContextTokens === 0) {
