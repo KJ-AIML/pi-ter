@@ -10,6 +10,8 @@ import { signalTree } from './process.ts';
 
 export interface LaunchSpec {
   kind: TaskKind; title: string; cwd: string; command: string; executable: string; args: string[];
+  /** Preassigned task ID (a UUID), so resources made before launch can be named after the task. */
+  id?: string;
   env?: NodeJS.ProcessEnv; input?: string; model?: string; timeoutMs?: number;
   transform?: (stream: 'stdout' | 'stderr', text: string) => { stream: LogStream; text: string }[];
   summarize?: () => { result?: string; error?: string; usage?: TaskUsage };
@@ -51,7 +53,8 @@ export class TaskManager {
       this.tasks.delete(old.id); this.owned.delete(old.id); try{unlinkSync(old.logPath);}catch{} if(old.resultPath)try{unlinkSync(old.resultPath);}catch{}
       if(old.agent&&!this.list().some(t=>t!==old&&t.agent?.sessionDir===old.agent!.sessionDir))try{rmSync(old.agent.sessionDir,{recursive:true,force:true});}catch{}
     }
-    const id=randomUUID(); const logPath=join(this.options.logDir,`${id}.jsonl`);
+    if(spec.id!==undefined&&(!/^[0-9a-f-]{36}$/i.test(spec.id)||this.tasks.has(spec.id)))throw new Error('Invalid or duplicate task id');
+    const id=spec.id??randomUUID(); const logPath=join(this.options.logDir,`${id}.jsonl`);
     writeFileSync(logPath,'',{flag:'wx',mode:0o600});
     const task:TaskRecord={id,kind:spec.kind,title:cleanOutput(spec.title).slice(0,200),cwd:spec.cwd,command:spec.command,model:spec.model,status:'starting',startedAt:Date.now(),latest:'Starting',logPath,logs:[],dropped:0,diskTruncated:false,agent:spec.agent};
     this.tasks.set(id,task);

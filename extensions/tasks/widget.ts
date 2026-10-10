@@ -18,6 +18,15 @@ export function progressText(task: TaskRecord): string {
   return parts.join(' · ');
 }
 
+/** Short default title: first line, cut at the first sentence end, then at a word boundary (≤48 chars). */
+export function shortTitle(text: string, max = 48): string {
+  const line = text.trim().split(/\r?\n/).find(l => l.trim())?.trim().replace(/\s+/g, ' ') ?? '';
+  const sentence = /^(.{12,}?[.!?])(\s|$)/.exec(line)?.[1] ?? line;
+  if (sentence.length <= max) return sentence;
+  const cut = sentence.slice(0, max - 1); const space = cut.lastIndexOf(' ');
+  return (space >= max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, '') + '…';
+}
+
 export const elapsed = (task: TaskRecord, now: number) => {
   const s = Math.max(0, Math.floor(((task.endedAt ?? now) - task.startedAt) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;

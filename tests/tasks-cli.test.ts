@@ -128,5 +128,6 @@ test('worktree writer edits only its own worktree and the result lists the chang
  assert.equal(done.details.status,'completed',done.content[0].text);
  assert.match(done.content[0].text,/Wrote the file\.[\s\S]*Worktree: branch piter\/[\s\S]*Untracked: agent-output\.txt/);
  assert.ok(!existsSync(join(repo,'agent-output.txt')),'source checkout untouched');
- const wt=/at (\S+piter-worktrees\S+)/.exec(done.content[0].text)![1];assert.ok(existsSync(join(wt,'agent-output.txt')));
+ const wt=/at (\S+piter-worktrees\S+)/.exec(done.content[0].text)![1];
+ assert.match(done.content[0].text,new RegExp(`branch piter/${started.details.id.slice(0,8)} `),'branch is named after the task ID');assert.ok(existsSync(join(wt,'agent-output.txt')));
 });

@@ -10,6 +10,7 @@ import { terminalLaunch, type ShellKind } from './process.ts';
 import { agentLaunch, latestSession, MAX_INSTRUCTIONS, ROLES, THINKING_LEVELS, type AgentAccess, type AgentRole } from './subagent.ts';
 import { TasksView } from './view.ts';
 import { createWorktree, finishWorktree, sourceDirty, type AgentWorktree } from './worktree.ts';
+import { shortTitle } from './widget.ts';
 import { renderTaskWidget, visibleTasks, type Paint } from './widget.ts';
 
 const toolNamesSchema=(description:string)=>Type.Optional(Type.Array(Type.String({minLength:1,maxLength:100}),{maxItems:64,description}));
@@ -101,7 +102,7 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
   function runTerminal(params:{command:string;title?:string;cwd?:string;shell?:ShellKind;timeout?:number},ctx:ExtensionContext){
     if(!params.command.trim())throw new Error('Command is required');
     const launch=terminalLaunch(params.command,params.shell||'auto');
-    const task=ensure(ctx).start({kind:'terminal',title:params.title||params.command.slice(0,80),cwd:directory(ctx,params.cwd),command:params.command,...launch,timeoutMs:params.timeout===undefined?undefined:params.timeout*1000});
+    const task=ensure(ctx).start({kind:'terminal',title:params.title||shortTitle(params.command),cwd:directory(ctx,params.cwd),command:params.command,...launch,timeoutMs:params.timeout===undefined?undefined:params.timeout*1000});
     return response(`Started background terminal ${task.id}. Use /tasks to watch it. A completion message will arrive automatically.`,summary(task));
   }
   type AgentParams={task:string;title?:string;cwd?:string;provider?:string;model?:string;timeout?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[];role?:AgentRole;thinking?:string;instructions?:string;continueFrom?:string;worktree?:boolean};
@@ -130,10 +131,12 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     let cwd:string=params.cwd!==undefined?directory(ctx,params.cwd):base.cwd??directory(ctx);
     // A continued worktree run keeps its worktree; a new one gets a fresh worktree.
     let worktree:AgentWorktree|undefined=base.worktree;let dirtyNote='';
-    if(params.worktree&&!worktree){worktree=createWorktree(cwd,randomUUID().slice(0,8));cwd=worktree.cwd;if(sourceDirty(worktree.repo))dirtyNote=' Note: the source checkout has uncommitted changes that the worktree does not include.';}
+    // The task ID is chosen now so the worktree branch can be named after it: piter/<first 8 of the ID>.
+    const taskId=randomUUID();
+    if(params.worktree&&!worktree){worktree=createWorktree(cwd,taskId.slice(0,8));cwd=worktree.cwd;if(sourceDirty(worktree.repo))dirtyNote=' Note: the source checkout has uncommitted changes that the worktree does not include.';}
     mkdirSync(sessionDir,{recursive:true,mode:0o700});
     let spec;
-    try{spec=agentLaunch({task:params.task,title:title||params.task.slice(0,80),cwd,provider,model,thinking:pick(params.thinking,'thinking'),parentThinking:ctx.thinkingLevel,role:pick(params.role,'role'),instructions:pick(params.instructions,'instructions'),access:pick(params.access,'access'),tools:pick(params.tools,'tools'),excludeTools:pick(params.excludeTools,'excludeTools'),timeoutMs:params.timeout===undefined?undefined:params.timeout*1000,sessionDir,sessionFile});}
+    try{spec=agentLaunch({task:params.task,title:title||shortTitle(params.task),cwd,provider,model,thinking:pick(params.thinking,'thinking'),parentThinking:ctx.thinkingLevel,role:pick(params.role,'role'),instructions:pick(params.instructions,'instructions'),access:pick(params.access,'access'),tools:pick(params.tools,'tools'),excludeTools:pick(params.excludeTools,'excludeTools'),timeoutMs:params.timeout===undefined?undefined:params.timeout*1000,sessionDir,sessionFile});spec.id=taskId;}
     catch(error){if(worktree&&!base.worktree)finishWorktree(worktree);throw error;}
     if(worktree){
       const w=worktree;const summarize=spec.summarize;spec.agent!.options.worktree=w;

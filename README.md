@@ -212,7 +212,7 @@ Subagent controls:
 | `thinking` | `off` … `max`; defaults to the role preset, then the parent's level |
 | `instructions` | Up to 8,000 characters appended to the child's system prompt |
 | `tasks` | A batch of up to 4 agents. Top-level options are shared defaults; each entry can override them. Every entry is validated and free slots are checked first, so a batch starts completely or not at all. Collect it with `piter_task_wait` `ids` |
-| `worktree` | `true` runs the agent in a new git worktree (`.git/piter-worktrees/<id>`, branch `piter/<id>` from HEAD), so parallel writers cannot overwrite each other or your checkout. Uncommitted changes in your checkout are not copied in. The result lists commits, changed and untracked files, and review/merge/discard commands; a worktree with no changes is removed |
+| `worktree` | `true` runs the agent in a new git worktree (`.git/piter-worktrees/<id>`, branch `piter/<id>` from HEAD, where `<id>` is the first 8 characters of the task ID), so parallel writers cannot overwrite each other or your checkout. Uncommitted changes in your checkout are not copied in. The result lists commits, changed and untracked files, and review/merge/discard commands; a worktree with no changes is removed |
 | `continueFrom` | ID of a finished subagent. Resumes its saved conversation with `task` as the next message, reusing its model, role, thinking, tool limits and worktree unless overridden |
 
 Subagents run in Pi's RPC mode with a private saved session. While one runs,

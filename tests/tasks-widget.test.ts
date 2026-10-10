@@ -45,3 +45,11 @@ test('running agent rows show live turns, tools and tokens; narrow terminals dro
   assert.doesNotMatch(renderTaskWidget([t], 60, now, paint).lines[1], /turns/);
   assert.match(renderTaskWidget([task('fresh', { kind: 'agent', progress: { turns: 0, tools: 0, tokens: 0, cost: 0 } })], 100, now, paint).lines[1], /fresh 1m12s$/);
 });
+
+test('default titles are short: first sentence, then a word boundary', async () => {
+  const { shortTitle } = await import('../extensions/tasks/widget.ts');
+  assert.equal(shortTitle('Review repos/tbuddy for security issues: token handling, chat pairing auth. Max 5 findings.'), 'Review repos/tbuddy for security issues: token…');
+  assert.equal(shortTitle('Try to create a file. Then report which tools you had.'), 'Try to create a file.');
+  assert.equal(shortTitle('\n  npm test\nmore'), 'npm test');
+  assert.equal(shortTitle('x'.repeat(100)).length, 48);
+});

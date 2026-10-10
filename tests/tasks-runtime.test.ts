@@ -85,3 +85,10 @@ test('group cleanup ignores EPERM from exited zombie groups but not while the le
  await signalTree({pid:12345,exitCode:0,signalCode:null} as any,true);
  await assert.rejects(signalTree({pid:12345,exitCode:null,signalCode:null} as any,true),/EPERM/);
 });
+
+test('a preassigned task id is used and must be a fresh UUID',async t=>{
+ const m=setup(t);const id='12345678-1234-4234-8234-123456789abc';
+ const a=m.start({...launch(''),id});assert.equal(a.id,id);
+ assert.throws(()=>m.start({...launch(''),id}),/duplicate/);assert.throws(()=>m.start({...launch(''),id:'../x'}),/Invalid/);
+ await until(()=>a.status==='completed');
+});
