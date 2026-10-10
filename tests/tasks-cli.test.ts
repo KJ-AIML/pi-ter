@@ -35,6 +35,7 @@ test('real Pi CLI child uses configured provider, streams tool activity and retu
  assert.match(task.result!,/Verified fixture/);assert.ok(task.logs.some(l=>l.stream==='tool'&&l.text.includes('read')));
  assert.equal(requests.length,2);
  assert.equal(task.usage?.turns,2,'usage counts both assistant turns');
+ assert.equal(task.progress?.turns,2);assert.equal(task.progress?.tools,1,'live tool counter saw the read call');
  assert.ok(task.resultPath&&readFileSync(task.resultPath,'utf8').includes('Verified fixture'),'final result saved to a file');
  const tools=requests[0].tools.map((v:any)=>v.function.name);
  assert.ok(!tools.includes('piter_agent'));assert.ok(!tools.includes('piter_terminal'));

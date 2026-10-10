@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { stripVTControlCharacters } from 'node:util';
-import { activeTask, type LogEntry, type LogStream, type TaskKind, type TaskRecord, type TaskUsage } from './types.ts';
+import { activeTask, type LogEntry, type LogStream, type TaskKind, type TaskProgress, type TaskRecord, type TaskUsage } from './types.ts';
 import { signalTree } from './process.ts';
 
 export interface LaunchSpec {
@@ -13,6 +13,7 @@ export interface LaunchSpec {
   env?: NodeJS.ProcessEnv; input?: string; model?: string; timeoutMs?: number;
   transform?: (stream: 'stdout' | 'stderr', text: string) => { stream: LogStream; text: string }[];
   summarize?: () => { result?: string; error?: string; usage?: TaskUsage };
+  progress?: () => TaskProgress;
 }
 interface Owned { child: ChildProcess; done: Promise<TaskRecord>; resolve: (t: TaskRecord)=>void; timeout?: NodeJS.Timeout; escalation?: NodeJS.Timeout; stopPromise?: Promise<TaskRecord>; reason?: 'stopped' | 'timed_out'; bytes: number; memory: number; seq: number; finished: boolean; pending?: { stream: LogStream; text: string }; flush?: NodeJS.Timeout }
 /** Streamed output is coalesced so token-sized deltas become readable entries and disk writes/redraws stay bounded. */
@@ -63,6 +64,7 @@ export class TaskManager {
       let summary:{result?:string;error?:string;usage?:TaskUsage}={};
       try{summary=spec.summarize?.() ?? {};}catch(error:any){summary.error=error.message;}
       task.result=summary.result?.slice(-24000);task.error=task.error || summary.error;task.usage=summary.usage;
+      if(spec.progress)try{task.progress=spec.progress();}catch{}
       // Keep the final answer as a readable file next to the JSONL log for later reference.
       if(task.result){const path=task.logPath.replace(/\.jsonl$/,'.result.md');try{writeFileSync(path,task.result.endsWith('\n')?task.result:task.result+'\n',{mode:0o600});task.resultPath=path;}catch{}}
       task.status=owned.reason ?? (code===0&&!task.error?'completed':'failed');
@@ -73,7 +75,11 @@ export class TaskManager {
     };
     child.once('spawn',()=>{if(!owned.reason)task.status='running';this.changed();});
     const receive=(stream:'stdout'|'stderr',text:string)=>{
-      try {const entries=spec.transform?spec.transform(stream,text):[{stream,text}];for(const entry of entries)this.append(task,entry.stream,entry.text);}
+      try {
+        const entries=spec.transform?spec.transform(stream,text):[{stream,text}];
+        if(spec.progress){const before=JSON.stringify(task.progress);task.progress=spec.progress();if(!entries.length&&JSON.stringify(task.progress)!==before)this.changed();}
+        for(const entry of entries)this.append(task,entry.stream,entry.text);
+      }
       catch(error:any){task.error=`Output decode failed: ${error.message}`;this.append(task,'system',task.error);void this.stop(id).catch(()=>{});}
     };
     for(const stream of ['stdout','stderr'] as const){const decoder=new StringDecoder('utf8');child[stream]!.on('data',(chunk:Buffer)=>receive(stream,decoder.write(chunk)));child[stream]!.on('end',()=>{const tail=decoder.end();if(tail)receive(stream,tail);});}

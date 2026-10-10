@@ -44,3 +44,16 @@ test('usage is summed across assistant turns and ignores malformed values',()=>{
  const s=p.summary();assert.equal(s.result,'final');assert.deepEqual({...s.usage,cost:Number(s.usage!.cost.toFixed(4))},{input:100,output:20,cacheRead:5,cacheWrite:0,totalTokens:155,cost:0.012,turns:2});
  assert.equal(new AgentOutput().summary().usage,undefined);
 });
+test('live progress counts turns, tool calls and streaming tokens before the turn ends',()=>{
+ const p=new AgentOutput();const send=(e:any)=>p.consume('stdout',JSON.stringify(e)+'\n');
+ assert.deepEqual(p.progress(),{turns:0,tools:0,tokens:0,cost:0});
+ send({type:'message_start',message:{role:'assistant'}});
+ send({type:'message_update',usage:{totalTokens:900,cost:{total:0.01}},assistantMessageEvent:{type:'text_delta',delta:'hi'}});
+ assert.deepEqual(p.progress(),{turns:1,tools:0,tokens:900,cost:0.01},'streaming usage counts live');
+ send({type:'tool_execution_start',toolCallId:'1',toolName:'read',args:{}});send({type:'tool_execution_start',toolCallId:'2',toolName:'ls',args:{}});
+ send({type:'message_end',message:{role:'assistant',content:[],stopReason:'toolUse',usage:{totalTokens:1000,cost:{total:0.02}}}});
+ send({type:'message_start',message:{role:'user'}});
+ send({type:'message_start',message:{role:'assistant'}});
+ send({type:'message_update',usage:{totalTokens:300},assistantMessageEvent:{type:'text_delta',delta:'x'}});
+ assert.deepEqual(p.progress(),{turns:2,tools:2,tokens:1300,cost:0.02},'finished usage is not double counted');
+});

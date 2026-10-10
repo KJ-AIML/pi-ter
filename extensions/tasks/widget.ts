@@ -9,6 +9,15 @@ export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 export const KEEP_FINISHED_MS = 5 * 60_000;
 export const MAX_ROWS = 6;
 
+const compact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+/** Agent counters for a row, e.g. "3 turns · 7 tools · 12.4k". Empty until there is something to show. */
+export function progressText(task: TaskRecord): string {
+  const p = task.progress; if (!p || (!p.turns && !p.tools && !p.tokens)) return '';
+  const parts = [`${p.turns} turn${p.turns === 1 ? '' : 's'}`, `${p.tools} tool${p.tools === 1 ? '' : 's'}`];
+  if (p.tokens) parts.push(compact(p.tokens));
+  return parts.join(' · ');
+}
+
 export const elapsed = (task: TaskRecord, now: number) => {
   const s = Math.max(0, Math.floor(((task.endedAt ?? now) - task.startedAt) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
@@ -50,7 +59,9 @@ export function renderTaskWidget(tasks: TaskRecord[], width: number, now: number
     const kind = paint('muted', (task.kind === 'agent' ? 'Agent' : 'Run').padEnd(5));
     const failed = task.status === 'failed' || task.status === 'timed_out';
     const note = failed ? (task.exitCode != null ? ` · exit ${task.exitCode}` : task.status === 'timed_out' ? ' · timed out' : ' · failed') : '';
-    const time = paint('dim', ` ${elapsed(task, now)}${note}`);
+    // Stats are dropped on narrow terminals before the title is squeezed.
+    const stats = width >= 70 ? progressText(task) : '';
+    const time = paint('dim', ` ${elapsed(task, now)}${stats ? ` · ${stats}` : ''}${note}`);
     const prefix = `${paint('dim', last ? '└─' : '├─')} ${glyph(task, now, paint)} ${kind} `;
     const room = Math.max(4, width - visibleWidth(prefix) - visibleWidth(time));
     const plain = truncateToWidth(cleanOutput(task.title).replace(/\s+/g, ' ').trim(), room, '…');

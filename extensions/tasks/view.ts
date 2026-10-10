@@ -1,4 +1,5 @@
 import { copyToClipboard } from './clipboard.ts';
+import { progressText } from './widget.ts';
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { activeTask, type LogEntry, type LogStream, type TaskRecord, type TaskSource } from './types.ts';
 
@@ -114,7 +115,7 @@ export class TasksView {
     if (!task) return [cyan(' TASKS'), '', dim('  Task is no longer available.'), dim(' Esc back')];
     const exit = task.exitCode !== undefined ? ` · exit ${task.exitCode ?? '—'}` : '';
     const lines = [
-      `${dim(' [x]')} ${cyan(oneLine(task.title))} ${dim(`${task.status} · ${elapsed(task)}${exit}`)}`,
+      `${dim(' [x]')} ${cyan(oneLine(task.title))} ${dim(`${task.status} · ${elapsed(task)}${progressText(task) ? ` · ${progressText(task)}` : ''}${exit}`)}`,
       dim(` ${task.id} · ${task.kind} · cwd ${oneLine(task.cwd)} · ${oneLine(task.command)}`),
     ];
     if (task.error) lines.push(` ${purple('error')} ${oneLine(task.error)}`);

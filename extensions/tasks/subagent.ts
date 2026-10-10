@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { getPackageDir } from '@earendil-works/pi-coding-agent';
 import { join, basename } from 'node:path';
 import type { LaunchSpec } from './manager.ts';
-import type { LogStream, TaskUsage } from './types.ts';
+import type { LogStream, TaskProgress, TaskUsage } from './types.ts';
 type Entry = { stream: LogStream; text: string };
 const contentText = (content: any): string => Array.isArray(content) ? content.filter(p=>p?.type==='text').map(p=>p.text||'').join('\n') : typeof content==='string'?content:'';
 
@@ -11,6 +11,13 @@ export class AgentOutput {
   private buffer=''; private overflow=false; private error?:string; private result=''; private streamed=false;
   private toolText=new Map<string,string>();
   private usage:TaskUsage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:0,turns:0};
+  /** Usage of the assistant message currently streaming; folded into usage at message_end. */
+  private current:{tokens:number;cost:number}={tokens:0,cost:0};
+  private turnsStarted=0;private toolsStarted=0;
+  /** Live counters, including the message that is still streaming. */
+  progress():TaskProgress{
+    return {turns:this.turnsStarted,tools:this.toolsStarted,tokens:this.usage.totalTokens+this.current.tokens,cost:this.usage.cost+this.current.cost};
+  }
   private addUsage(u:any){
     const n=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:0;
     this.usage.turns++;if(!u||typeof u!=='object')return;
@@ -31,10 +38,15 @@ export class AgentOutput {
   private decode(line:string):Entry[]{
     if(!line.trim())return [];
     let e:any;try{e=JSON.parse(line);}catch{return [{stream:'stdout',text:line.slice(0,4096)}];}
-    if(e.type==='message_start'){this.streamed=false;return [];}
+    if(e.type==='message_start'){this.streamed=false;if(e.message?.role==='assistant'){this.turnsStarted++;this.current={tokens:0,cost:0};}return [];}
+    if(e.type==='message_update'&&e.usage&&typeof e.usage==='object'){
+      const n=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:0;
+      this.current={tokens:n(e.usage.totalTokens),cost:n(e.usage.cost?.total)};
+    }
     if(e.type==='message_update' && e.assistantMessageEvent?.type==='text_delta'){
       this.streamed=true;return [{stream:'agent',text:String(e.assistantMessageEvent.delta||'')}];
     }
+    if(e.type==='tool_execution_start'){this.toolsStarted++;}
     if(e.type==='tool_execution_start')return [{stream:'tool',text:`\n▶ ${e.toolName} ${JSON.stringify(e.args??{}).slice(0,4000)}\n`}];
     if(e.type==='tool_execution_update'){
       const text=contentText(e.partialResult?.content);const key=String(e.toolCallId);const previous=this.toolText.get(key)||'';
@@ -48,7 +60,9 @@ export class AgentOutput {
       return [{stream:'tool',text:`${text.startsWith(previous)?text.slice(previous.length):text}\n${e.isError?'✗':'✓'} ${e.toolName}\n`}];
     }
     if(e.type==='message_end'&&e.message?.role==='assistant'){
-      this.addUsage(e.message.usage);
+      this.addUsage(e.message.usage);this.current={tokens:0,cost:0};
+      // A provider may skip message_start on the wire; never report fewer turns than finished ones.
+      this.turnsStarted=Math.max(this.turnsStarted,this.usage.turns);
       const text=contentText(e.message.content);if(text)this.result=text.slice(-24000);
       if(e.message.stopReason==='error'||e.message.stopReason==='aborted')this.error=e.message.errorMessage||`Subagent ${e.message.stopReason}`;
       return [...(!this.streamed&&text?[{stream:'agent' as const,text}]:[]),...(this.error?[{stream:'system' as const,text:this.error}]:[])];
@@ -111,6 +125,6 @@ export function agentLaunch(options:{task:string;title:string;cwd:string;provide
     kind:'agent',title:options.title,cwd:options.cwd,command:'Pi subagent',model:`${options.provider}/${options.model}`,
     executable:invocation.executable,args:[...invocation.args,'--mode','json','--print','--no-session','--provider',options.provider,'--model',options.model,...(thinking?['--thinking',thinking]:[]),...limits,...(prompt?['--append-system-prompt',prompt]:[])],
     input:options.task,env:{...process.env,PITER_SUBAGENT:'1',PI_SPLASH:'0'},timeoutMs:options.timeoutMs,
-    transform:(stream,text)=>parser.consume(stream,text),summarize:()=>parser.summary(),
+    transform:(stream,text)=>parser.consume(stream,text),summarize:()=>parser.summary(),progress:()=>parser.progress(),
   };
 }

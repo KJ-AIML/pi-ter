@@ -14,7 +14,7 @@ import { renderTaskWidget, visibleTasks, type Paint } from './widget.ts';
 const toolNamesSchema=(description:string)=>Type.Optional(Type.Array(Type.String({minLength:1,maxLength:100}),{maxItems:64,description}));
 const timeoutSchema=Type.Optional(Type.Number({minimum:0,maximum:86400,description:'Timeout in seconds; default 1800. Set 0 for no timeout.'}));
 const directory=(ctx:ExtensionContext,cwd?:string)=>{const path=resolve(ctx.cwd,cwd||'.');if(!statSync(path).isDirectory())throw new Error('cwd must be a directory');return path;};
-const summary=(task:TaskRecord)=>({id:task.id,kind:task.kind,title:task.title,status:task.status,cwd:task.cwd,model:task.model,startedAt:task.startedAt,endedAt:task.endedAt,durationMs:(task.endedAt??Date.now())-task.startedAt,exitCode:task.exitCode,latest:task.latest,error:task.error,logPath:task.logPath,resultPath:task.resultPath,usage:task.usage,dropped:task.dropped,diskTruncated:task.diskTruncated});
+const summary=(task:TaskRecord)=>({id:task.id,kind:task.kind,title:task.title,status:task.status,cwd:task.cwd,model:task.model,startedAt:task.startedAt,endedAt:task.endedAt,durationMs:(task.endedAt??Date.now())-task.startedAt,exitCode:task.exitCode,latest:task.latest,error:task.error,logPath:task.logPath,resultPath:task.resultPath,usage:task.usage,progress:task.progress,dropped:task.dropped,diskTruncated:task.diskTruncated});
 const seconds=(ms:number)=>ms<60000?`${(ms/1000).toFixed(1)}s`:`${Math.floor(ms/60000)}m${String(Math.round(ms%60000/1000)).padStart(2,'0')}s`;
 /** One-line run stats for completion messages, e.g. "42s · 3 turns · 12.3k tokens · $0.0410". */
 export function usageLine(task:TaskRecord):string{

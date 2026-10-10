@@ -38,3 +38,10 @@ test('overflow and collapse use a └─ summary row, and lines never exceed the
   const c = renderTaskWidget(many, 80, now, paint, true).lines;
   assert.deepEqual(c, ['● Tasks (0/9)', '└─ 9 running · F6 to open', '']);
 });
+
+test('running agent rows show live turns, tools and tokens; narrow terminals drop them first', () => {
+  const t = task('Review tbuddy', { kind: 'agent', progress: { turns: 3, tools: 7, tokens: 12_400, cost: 0 } });
+  assert.match(renderTaskWidget([t], 100, now, paint).lines[1], /Review tbuddy 1m12s · 3 turns · 7 tools · 12\.4k$/);
+  assert.doesNotMatch(renderTaskWidget([t], 60, now, paint).lines[1], /turns/);
+  assert.match(renderTaskWidget([task('fresh', { kind: 'agent', progress: { turns: 0, tools: 0, tokens: 0, cost: 0 } })], 100, now, paint).lines[1], /fresh 1m12s$/);
+});
