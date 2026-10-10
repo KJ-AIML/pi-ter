@@ -1,16 +1,15 @@
-import { paint } from '../workspace-view.ts';
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type } from 'typebox';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
-import { cleanOutput, TaskManager } from './manager.ts';
+import { isKeyRelease, matchesKey, type TuiMouseEvent } from '@earendil-works/pi-tui';
+import { TaskManager } from './manager.ts';
 import { activeTask, type TaskRecord } from './types.ts';
 import { terminalLaunch, type ShellKind } from './process.ts';
 import { agentLaunch, MAX_INSTRUCTIONS, ROLES, THINKING_LEVELS, type AgentAccess, type AgentRole } from './subagent.ts';
-import { THEME } from '../theme.ts';
 import { TasksView } from './view.ts';
+import { renderTaskWidget, visibleTasks, type Paint } from './widget.ts';
 
 const toolNamesSchema=(description:string)=>Type.Optional(Type.Array(Type.String({minLength:1,maxLength:100}),{maxItems:64,description}));
 const timeoutSchema=Type.Optional(Type.Number({minimum:0,maximum:86400,description:'Timeout in seconds; default 1800. Set 0 for no timeout.'}));
@@ -53,7 +52,7 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
     const m=new TaskManager({logDir:join(options.logRoot||join(getAgentDir(),'piter-tasks'),randomUUID())});manager=m;
     const refresh=()=>{if(renderTimer)return;renderTimer=setTimeout(()=>{renderTimer=undefined;widgetRefresh?.();},100);};
     unsubscribe=m.subscribe(refresh);
-    if(ctx.hasUI)ctx.ui.setWidget('piter-tasks',(tui)=>{
+    if(ctx.hasUI)ctx.ui.setWidget('piter-tasks',(tui,theme)=>{
       widgetRefresh=()=>tui.requestRender();
       const launch=(id?:string)=>{void open(ctx,id).catch(error=>ctx.ui.notify(String(error.message||error),'error'));};
       unsubscribeInput?.();
@@ -61,53 +60,30 @@ export function registerTasks(pi:ExtensionAPI,options:{logRoot?:string}={}) {
         if(view||tui.hasOverlay()||isKeyRelease(data))return;
         if(matchesKey(data,'f6')||matchesKey(data,'ctrl+alt+t')){launch();return {consume:true};}
       });
-      let shown:TaskRecord[]=[];
-      let hits:{id:string;kill:number;inspect:number}[]=[];
-      let expanded=false;
-      let spin:ReturnType<typeof setInterval>|undefined;
-      const frames=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-      const clock=(task:TaskRecord)=>{const seconds=Math.max(0,Math.floor(((task.endedAt??Date.now())-task.startedAt)/1000));return seconds<60?`${seconds}s`:`${Math.floor(seconds/60)}m${String(seconds%60).padStart(2,'0')}s`;};
-      const stopSpin=()=>{if(spin)clearInterval(spin);spin=undefined;};
+      // Todos-style panel (see widget.ts). Colors come from Pi's active theme, like the Todos widget.
+      const tint:Paint=(color,text)=>{try{return typeof theme?.fg==='function'?theme.fg(color as any,text):text;}catch{return text;}};
+      let rows:Array<string|undefined>=[];
+      let collapsed=false;
+      let tick:ReturnType<typeof setInterval>|undefined;let tickMs=0;
+      const stopTick=()=>{if(tick)clearInterval(tick);tick=undefined;tickMs=0;};
       return {render:(width:number)=>{
-        const tasks=m.list();const running=tasks.filter(activeTask);
-        if(running.length&&!spin)spin=setInterval(()=>widgetRefresh?.(),120);
-        if(!running.length)stopSpin();
-        shown=expanded?running.slice(-8):[];
-        const count=running.length;
-        const head=paint(THEME.muted,` ${expanded?'▾':'▸'} Tasks ${count}`);
-        if(!expanded)return [truncateToWidth(head,width)];
-        const frame=frames[Math.floor(Date.now()/120)%frames.length];
-        const actions=' '+paint(THEME.muted,'[kill]')+' '+paint(THEME.accent,'[inspect]');
-        const actionsW=visibleWidth(actions);
-        hits=[];
-        const rows=shown.map(task=>{
-          const mark=paint(THEME.accent,frame);
-          const kind=paint(THEME.accent,task.kind==='agent'?'Agent':'Run');
-          const plain=cleanOutput(task.title).replace(/[\r\n]/g,' ');
-          const title=paint(THEME.text,plain);
-          const prefix=` ${mark} ${kind} `;
-          const room=Math.max(4,width-2-visibleWidth(prefix)-actionsW);
-          const shownTitle=truncateToWidth(title,room,'',true);
-          const kill=visibleWidth(prefix)+visibleWidth(shownTitle)+1;
-          hits.push({id:task.id,kill,inspect:kill+7});
-          return truncateToWidth(prefix+shownTitle+actions,Math.max(1,width-2),'');
-        });
-        return [truncateToWidth(head,width),...rows];
+        const now=Date.now();const tasks=m.list();
+        // Spinner frames while running; a slow tick while finished rows are waiting to expire.
+        const want=tasks.some(activeTask)?120:visibleTasks(tasks,now).length?1000:0;
+        if(want!==tickMs){stopTick();if(want){tick=setInterval(()=>widgetRefresh?.(),want);tick.unref?.();tickMs=want;}}
+        const frame=renderTaskWidget(tasks,width,now,tint,collapsed);
+        rows=frame.rows;return frame.lines;
       },handleMouse(event:TuiMouseEvent){
         if(event.button!=='left'||!['press','click','release'].includes(event.type))return;
         if(event.type==='click'){
-          const task=shown[event.y-1];
-          const right=event.width||80;
-          if(!expanded||event.y<=0)expanded=!expanded;
-          else if(task){
-            const hit=hits[event.y-1];
-            if(hit&&event.x>=hit.inspect)launch(task.id);
-            else if(hit&&event.x>=hit.kill){void m.stop(task.id).then(()=>widgetRefresh?.()).catch(error=>ctx.ui.notify(String(error.message||error),'error'));}
-          }
+          const id=rows[event.y];
+          if(event.y===0)collapsed=!collapsed;
+          else if(id&&m.get(id))launch(id);
+          else if(collapsed)launch();
           widgetRefresh?.();
         }
         return {handled:true};
-      },invalidate(){},dispose(){stopSpin();unsubscribeInput?.();unsubscribeInput=undefined;widgetRefresh=undefined;}};
+      },invalidate(){},dispose(){stopTick();unsubscribeInput?.();unsubscribeInput=undefined;widgetRefresh=undefined;}};
     },{placement:'aboveEditor'});
     notify=task=>{
       const output=task.result||task.logs.filter(e=>e.stream!=='system').map(e=>e.text).join('').slice(-6000);

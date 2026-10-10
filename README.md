@@ -98,10 +98,21 @@ The existing `skills/` and `prompts/` are still included in the Pi package.
 ## Background tasks and subagents
 
 Pi-ter now adds a shared Tasks panel for commands and child Pi agents. Your
-existing input and status bar stay in place. A **Tasks card** remains visible above
-the editor, including when no tasks exist. In fullscreen mode, click the card to
-open the panel or a task row to open its logs. Click a task in the panel to inspect
-it; use the **Back / Close** controls or Escape to return.
+existing input and status bar stay in place. While tasks run, a Todos-style list
+appears above the editor:
+
+```text
+● Tasks (1/3)
+├─ ⠹ Agent Heli recon (read-only) 1m12s
+├─ ✓ Run   npm test 8s
+└─ ✗ Run   npm run build 3s · exit 1
+```
+
+A spinner marks running tasks, `✓` completed, `✗` failed or timed out and `■`
+stopped. Finished tasks stay (dimmed) for five minutes; with nothing to show the
+list is hidden. In fullscreen mode, click a row to open its logs or the heading to
+collapse the list. Click a task in the panel to inspect it; use the
+**Back / Close** controls or Escape to return.
 
 Press **F6** (on some Macs, **Fn+F6**) to open it without typing a command,
 including with a custom editor. **Ctrl+Alt+T** remains an alternate shortcut,
@@ -150,7 +161,7 @@ Closing the viewer does not stop work. Stop an infinite loop from Tasks when don
 | Key | Action |
 | --- | --- |
 | F6 | Open Tasks from the main screen |
-| Click (fullscreen) | Open the card/task, Back or Close |
+| Click (fullscreen) | Open a task row, collapse the list, Back or Close |
 | Up / Down | Select task, or scroll log |
 | Tab | Filter all / terminals / agents in task list |
 | Enter | Open selected task |
@@ -238,7 +249,7 @@ Standalone Windows Pi installations need `node` on PATH for the task supervisor;
 
 ### Workspace appearance
 
-The welcome screen uses a centered content area on wide terminals, adjacent resource counts, and short examples with `+N more`. Full resource names remain available through `/workspace`. The Tasks card uses a compact, muted border and cyan label; input and status-bar components are unchanged.
+The welcome screen uses a centered content area on wide terminals, adjacent resource counts, and short examples with `+N more`. Full resource names remain available through `/workspace`. The Tasks list follows the Todos widget style and the active Pi theme; input and status-bar components are unchanged.
 
 ![Terminal-cell preview with sample resources](docs/previews/workspace.png)
 

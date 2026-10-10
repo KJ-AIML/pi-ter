@@ -32,7 +32,7 @@ test('subagent environment does not register recursive task tools',()=>{
  try{const controller=registerTasks({registerTool(){assert.fail('recursive task tool')}} as any);assert.equal(controller.getManager(),undefined);}finally{if(previous===undefined)delete process.env.PITER_SUBAGENT;else process.env.PITER_SUBAGENT=previous;}
 });
 
-test('empty Tasks card opens by mouse and raw F6 without using the editor',async t=>{
+test('empty Tasks panel is hidden and raw F6 still opens the viewer without using the editor',async t=>{
  const events=new Map<string,Function>();let widget:any,input:any,view:any,close:any;let opens=0,removed=0;let otherOverlay=false;
  const root=mkdtempSync(join(tmpdir(),'piter-open-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const pi:any={on:(n:string,f:Function)=>events.set(n,f),registerTool(){},registerCommand(){},registerShortcut(){},sendMessage(){}};
@@ -40,8 +40,7 @@ test('empty Tasks card opens by mouse and raw F6 without using the editor',async
  const ctx:any={cwd:process.cwd(),hasUI:true,ui:{notify(){},onTerminalInput(fn:any){input=fn;return()=>{input=undefined;removed++;};},setWidget(_key:string,f:any){if(f)widget=f(tui);},custom(factory:any){opens++;return new Promise<void>(done=>{close=done;view=factory(tui,{}, {},done);});}}};
  const c=registerTasks(pi,{logRoot:root});t.after(()=>c.dispose());
  await events.get('session_start')!({},ctx);
- assert.match(widget.render(80).join(''),/Tasks/);
- widget.handleMouse({type:'click',button:'left',x:4,y:0});assert.equal(opens,0);assert.match(widget.render(80).join('\n'),/▾ Tasks/);widget.handleMouse({type:'click',button:'left',x:4,y:0});assert.match(widget.render(80).join('\n'),/▸ Tasks/);
+ assert.deepEqual(widget.render(80),[],'no tasks: panel hidden, no "Tasks 0"');
  assert.deepEqual(input('\x1b[17~'),{consume:true});assert.equal(opens,1);
  assert.equal(input('\x1b[17~'),undefined,'do not intercept inside overlay');close();await sleep(0);
  otherOverlay=true;assert.equal(input('\x1b[17~'),undefined);otherOverlay=false;
@@ -58,11 +57,17 @@ test('fullscreen renderer dispatches real SGR mouse input to the Tasks card',asy
  const pi:any={on:(n:string,f:Function)=>events.set(n,f),registerTool(){},registerCommand(){},registerShortcut(){},sendMessage(){}};
  const ctx:any={cwd:process.cwd(),hasUI:true,ui:{notify(){},onTerminalInput(fn:any){return tui.addInputListener(fn);},setWidget(_k:string,f:any){if(widget)tui.removeChild(widget);if(f){widget=f(tui);tui.addChild(widget);}},custom(factory:any){opens++;return new Promise<void>(done=>{const component=factory(tui,{}, {},()=>{overlay.hide();done();});const overlay=tui.showOverlay(component);});}}};
  const c=registerTasks(pi,{logRoot:root});t.after(async()=>{await c.dispose();tui.stop();});
- await events.get('session_start')!({},ctx);tui.start();tui.renderNow(true);
+ await events.get('session_start')!({},ctx);
+ c.getManager()!.start({kind:'terminal',title:'Long job',cwd:process.cwd(),command:'node',executable:process.execPath,args:['-e','setInterval(()=>{},100)'],timeoutMs:10000});
+ tui.start();tui.renderNow(true);
+ const plain=()=>widget.render(90).join('\n').replace(/\x1b\[[0-9;]*m/g,'');
+ assert.match(plain(),/● Tasks \(0\/1\)\n└─ \S Run   Long job/);
  input('\x1b[<0;5;1M');input('\x1b[<0;5;1m');
- assert.equal(opens,0,'card click toggles the list instead of opening the overlay');assert.match(widget.render(90).join('\n'),/▾ Tasks/);
+ assert.equal(opens,0,'heading click collapses instead of opening');assert.match(plain(),/F6 to open/);
+ input('\x1b[<0;5;1M');input('\x1b[<0;5;1m');assert.match(plain(),/Long job/);
+ input('\x1b[<0;20;2M');input('\x1b[<0;20;2m');assert.equal(opens,1,'clicking a task row inspects it');
  input('\x1b');await sleep(0);assert.equal(tui.hasOverlay(),false);
- input('\x1b[17~');assert.equal(opens,1,'F6 opens without invoking an editor shortcut');
+ input('\x1b[17~');assert.equal(opens,2,'F6 opens without invoking an editor shortcut');
 });
 
 test('piter_task_wait returns the result once, without a duplicate follow-up, and timing out leaves the task running',async t=>{
