@@ -12,7 +12,8 @@ export class CleanHeader {
   private tui?: TUI;
   private adapter?: StartupResources;
   private splash?: HelloPiSplash;
-  constructor(private pi: ExtensionAPI) {}
+  private pi: ExtensionAPI;
+  constructor(pi: ExtensionAPI) { this.pi = pi; }
   attach(ctx: ExtensionContext): void {
     this.dispose();
     if (!ctx.hasUI || ctx.mode !== 'tui' || !this.enabled) return;

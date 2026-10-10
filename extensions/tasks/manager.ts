@@ -25,7 +25,9 @@ export class TaskManager {
   private completions = new Set<(task:TaskRecord)=>void>();
   private closed = false;
   private maxConcurrent: number; private maxMemoryBytes: number; private maxLogBytes: number;
-  constructor(private options: { logDir: string; maxConcurrent?: number; maxMemoryBytes?: number; maxLogBytes?: number }) {
+  private options: { logDir: string; maxConcurrent?: number; maxMemoryBytes?: number; maxLogBytes?: number };
+  constructor(options: { logDir: string; maxConcurrent?: number; maxMemoryBytes?: number; maxLogBytes?: number }) {
+    this.options=options;
     this.maxConcurrent=options.maxConcurrent ?? 4; this.maxMemoryBytes=options.maxMemoryBytes ?? 256*1024; this.maxLogBytes=options.maxLogBytes ?? 2*1024*1024;
     mkdirSync(options.logDir,{recursive:true,mode:0o700});
   }

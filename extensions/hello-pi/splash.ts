@@ -12,7 +12,8 @@ export function splashFrame(time: number, width: number, rows: number, underlyin
 export class HelloPiSplash {
   private timer?: ReturnType<typeof setInterval>;
   private handle?: OverlayHandle;
-  constructor(private tui: TUI, private base: (width: number) => string[], private type: (text: string) => void) {}
+  private tui: TUI; private base: (width: number) => string[]; private type: (text: string) => void;
+  constructor(tui: TUI, base: (width: number) => string[], type: (text: string) => void) { this.tui = tui; this.base = base; this.type = type; }
   start(): void {
     this.dispose();
     if (process.env.PI_SPLASH === '0' || process.env.TERM === 'dumb' || process.env.NO_COLOR !== undefined) return;

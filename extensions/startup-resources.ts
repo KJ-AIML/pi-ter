@@ -7,7 +7,8 @@ export class StartupResources {
   document?: Node;
   private container?: Node;
   private original?: Node['render'];
-  constructor(private root: Node, private header: Node, private version: string) {}
+  private root: Node; private header: Node; private version: string;
+  constructor(root: Node, header: Node, version: string) { this.root = root; this.header = header; this.version = version; }
   connect(): boolean {
     if (this.container) return true;
     if (this.version !== '0.85.1') return false;

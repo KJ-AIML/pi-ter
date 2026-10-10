@@ -83,7 +83,7 @@ startup makes no network request for animation assets.
 
 ## Development
 
-Node.js 24 is used for the TypeScript test runner.
+Tests use Node's built-in TypeScript type stripping and need Node.js 22.18 or newer (CI uses Node.js 24).
 
 ```bash
 npm ci
