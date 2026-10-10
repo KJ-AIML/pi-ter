@@ -77,3 +77,11 @@ test('wait returns at once for an already-cancelled call and never reports a fin
  const raced=await m.wait(a.id,50);assert.equal(raced.timedOut,false);
  a.status='running';await m.stop(a.id);
 });
+
+test('group cleanup ignores EPERM from exited zombie groups but not while the leader still runs',{skip:process.platform==='win32'},async t=>{
+ const {signalTree}=await import('../extensions/tasks/process.ts');
+ const original=process.kill;t.after(()=>{process.kill=original;});
+ process.kill=((()=>{const e:any=new Error('kill EPERM');e.code='EPERM';throw e;}) as any);
+ await signalTree({pid:12345,exitCode:0,signalCode:null} as any,true);
+ await assert.rejects(signalTree({pid:12345,exitCode:null,signalCode:null} as any,true),/EPERM/);
+});

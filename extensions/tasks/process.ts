@@ -22,6 +22,12 @@ export async function signalTree(child: ChildProcess, force = false): Promise<vo
     });
   } else {
     try { process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM'); }
-    catch (error: any) { if (error.code !== 'ESRCH') throw error; }
+    catch (error: any) {
+      if (error.code === 'ESRCH') return;
+      // macOS reports EPERM for a group whose remaining members are exited zombies. Once our own
+      // leader has exited there is nothing left we could signal, so treat it as already gone.
+      if (error.code === 'EPERM' && (child.exitCode !== null || child.signalCode !== null)) return;
+      throw error;
+    }
   }
 }
