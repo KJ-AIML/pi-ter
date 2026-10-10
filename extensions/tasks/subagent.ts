@@ -63,11 +63,30 @@ export function piInvocation():{executable:string;args:string[]}{
   if(!/^(node|bun)(\.exe)?$/.test(exe))return {executable:process.execPath,args:[]};
   throw new Error('Cannot locate Pi CLI entry point for subagent');
 }
-export function agentLaunch(options:{task:string;title:string;cwd:string;provider:string;model:string;thinking?:string;timeoutMs?:number}):LaunchSpec{
-  const parser=new AgentOutput();const invocation=piInvocation();
+export type AgentAccess='full'|'read-only';
+/** Read-only children get file-inspection tools only; bash, editors and MCP gateways are denied by Pi itself. */
+export const READ_ONLY_TOOLS=['read','grep','find','ls'];
+export const READ_ONLY_DENY=['bash','edit','write','mcp','mcp__*'];
+const toolName=/^[A-Za-z0-9_.:*-]{1,100}$/;
+function toolList(label:string,names:string[]|undefined):string[]{
+  const list=[...new Set((names??[]).map(n=>n.trim()).filter(Boolean))];
+  for(const name of list)if(!toolName.test(name))throw new Error(`Invalid ${label} entry: ${JSON.stringify(name)}`);
+  return list;
+}
+/** Translate access/tool options into Pi CLI flags; deny always wins over allow in Pi. */
+export function toolArgs(options:{access?:AgentAccess;tools?:string[];excludeTools?:string[]}):string[]{
+  const access=options.access??'full';if(access!=='full'&&access!=='read-only')throw new Error(`Unknown access mode: ${access}`);
+  const allow=toolList('tools',options.tools);const deny=toolList('excludeTools',options.excludeTools);
+  const readOnly=access==='read-only';
+  const tools=allow.length?allow:readOnly?READ_ONLY_TOOLS:[];
+  const exclude=[...new Set([...deny,...(readOnly?READ_ONLY_DENY:[])])];
+  return [...(tools.length?['--tools',tools.join(',')]:[]),...(exclude.length?['--exclude-tools',exclude.join(',')]:[])];
+}
+export function agentLaunch(options:{task:string;title:string;cwd:string;provider:string;model:string;thinking?:string;timeoutMs?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[]}):LaunchSpec{
+  const limits=toolArgs(options);const parser=new AgentOutput();const invocation=piInvocation();
   return {
     kind:'agent',title:options.title,cwd:options.cwd,command:'Pi subagent',model:`${options.provider}/${options.model}`,
-    executable:invocation.executable,args:[...invocation.args,'--mode','json','--print','--no-session','--provider',options.provider,'--model',options.model,...(options.thinking?['--thinking',options.thinking]:[])],
+    executable:invocation.executable,args:[...invocation.args,'--mode','json','--print','--no-session','--provider',options.provider,'--model',options.model,...(options.thinking?['--thinking',options.thinking]:[]),...limits],
     input:options.task,env:{...process.env,PITER_SUBAGENT:'1',PI_SPLASH:'0'},timeoutMs:options.timeoutMs,
     transform:(stream,text)=>parser.consume(stream,text),summarize:()=>parser.summary(),
   };

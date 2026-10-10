@@ -16,3 +16,13 @@ test('launch uses stdin for task and explicitly inherits model, provider and rec
  const s=agentLaunch({task:'Review "x" & y\nnew line',title:'Review',cwd:process.cwd(),provider:'custom',model:'test-model',thinking:'low'});
  assert.equal(s.input,'Review "x" & y\nnew line');assert.ok(s.args.includes('--provider'));assert.ok(s.args.includes('custom'));assert.ok(s.args.includes('test-model'));assert.equal(s.env!.PITER_SUBAGENT,'1');assert.ok(s.args.includes('--no-session'));assert.ok(!s.args.includes(s.input!));
 });
+test('tool access options map to enforced Pi CLI flags and reject injection',async()=>{
+ const {toolArgs}=await import('../extensions/tasks/subagent.ts');
+ assert.deepEqual(toolArgs({}),[]);
+ assert.deepEqual(toolArgs({access:'read-only'}),['--tools','read,grep,find,ls','--exclude-tools','bash,edit,write,mcp,mcp__*']);
+ assert.deepEqual(toolArgs({access:'read-only',tools:['read','bash']}),['--tools','read,bash','--exclude-tools','bash,edit,write,mcp,mcp__*'],'deny wins: read-only cannot be widened');
+ assert.deepEqual(toolArgs({tools:['read',' read '],excludeTools:['web_search']}),['--tools','read','--exclude-tools','web_search']);
+ assert.throws(()=>toolArgs({tools:['read,bash']}),/Invalid tools/);assert.throws(()=>toolArgs({excludeTools:['--x y']}),/Invalid excludeTools/);
+ assert.throws(()=>toolArgs({access:'admin' as any}),/Unknown access/);
+ const s=agentLaunch({task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m',access:'read-only'});assert.ok(s.args.includes('--exclude-tools'));
+});
