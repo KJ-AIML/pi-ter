@@ -13,7 +13,8 @@ const task = (id: string, kind: 'terminal' | 'agent', title: string, extra: Part
 class Source implements TaskSource {
   listeners = new Set<() => void>();
   stopped: string[] = [];
-  constructor(public tasks: TaskRecord[]) {}
+  tasks: TaskRecord[];
+  constructor(tasks: TaskRecord[]) { this.tasks = tasks; }
   list() { return this.tasks; }
   get(id: string) { return this.tasks.find(t => t.id === id); }
   async stop(id: string) { this.stopped.push(id); return this.get(id)!; }

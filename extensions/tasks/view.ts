@@ -50,8 +50,19 @@ export class TasksView {
   private bodyCount = 0;
   private dragFrom: { x: number; y: number } | undefined;
   private dragTo: { x: number; y: number } | undefined;
-  constructor(private source: TaskSource, private requestRender: () => void, private close: () => void,
-    private rows: () => number, initialId?: string, private quote?: (text: string) => void) {
+  private source: TaskSource;
+  private requestRender: () => void;
+  private close: () => void;
+  private rows: () => number;
+  private quote?: (text: string) => void;
+
+  constructor(source: TaskSource, requestRender: () => void, close: () => void,
+    rows: () => number, initialId?: string, quote?: (text: string) => void) {
+    this.source = source;
+    this.requestRender = requestRender;
+    this.close = close;
+    this.rows = rows;
+    this.quote = quote;
     this.selectedId = initialId ?? source.list()[0]?.id;
     this.mode = initialId && source.get(initialId) ? 'detail' : 'list';
     this.modal = this.mode === 'detail';

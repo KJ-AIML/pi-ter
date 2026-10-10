@@ -23,7 +23,13 @@ export class TaskManager {
   private completions = new Set<(task:TaskRecord)=>void>();
   private closed = false;
   private maxConcurrent: number; private maxMemoryBytes: number; private maxLogBytes: number;
-  constructor(private options: { logDir: string; maxConcurrent?: number; maxMemoryBytes?: number; maxLogBytes?: number }) {
+  private options: { logDir: string; maxConcurrent?: number; maxMemoryBytes?: number; maxLogBytes?: number };
+  private logBuffers = new Map<string, string>();
+  private flushTimer?: NodeJS.Timeout;
+  private changedTimer?: NodeJS.Timeout;
+
+  constructor(options: { logDir: string; maxConcurrent?: number; maxMemoryBytes?: number; maxLogBytes?: number }) {
+    this.options = options;
     this.maxConcurrent=options.maxConcurrent ?? 4; this.maxMemoryBytes=options.maxMemoryBytes ?? 256*1024; this.maxLogBytes=options.maxLogBytes ?? 2*1024*1024;
     mkdirSync(options.logDir,{recursive:true,mode:0o700});
   }
@@ -31,7 +37,31 @@ export class TaskManager {
   get(id:string): TaskRecord | undefined { return this.tasks.get(id); }
   subscribe(listener:()=>void):()=>void { this.listeners.add(listener); return ()=>{this.listeners.delete(listener);}; }
   onComplete(listener:(task:TaskRecord)=>void):()=>void { this.completions.add(listener); return ()=>{this.completions.delete(listener);}; }
-  private changed() { for(const f of this.listeners) { try {f();} catch {} } }
+  private changed() {
+    if (this.changedTimer) { clearTimeout(this.changedTimer); this.changedTimer = undefined; }
+    for(const f of this.listeners) { try {f();} catch {} }
+  }
+  private scheduleChanged() {
+    if (this.changedTimer) return;
+    this.changedTimer = setTimeout(() => {
+      this.changedTimer = undefined;
+      for(const f of this.listeners) { try {f();} catch {} }
+    }, 60);
+  }
+  private flushTaskLogs(id: string) {
+    const buf = this.logBuffers.get(id);
+    if (!buf) return;
+    this.logBuffers.delete(id);
+    const task = this.tasks.get(id);
+    if (task) {
+      try { appendFileSync(task.logPath, buf); }
+      catch(error:any) { task.diskTruncated = true; task.error = `Log persistence failed: ${error.message}`; }
+    }
+  }
+  private flushAllLogs() {
+    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = undefined; }
+    for (const id of [...this.logBuffers.keys()]) this.flushTaskLogs(id);
+  }
   start(spec:LaunchSpec):TaskRecord {
     if(this.closed) throw new Error('Task manager is closed');
     if(this.list().filter(activeTask).length>=this.maxConcurrent) throw new Error(`Task concurrency limit (${this.maxConcurrent}) reached`);
@@ -63,6 +93,7 @@ export class TaskManager {
       task.exitCode=code;task.endedAt=Date.now();
       if(signal&&!owned.reason&&!task.error) task.error=`Process exited on ${signal}`;
       this.append(task,'system',`${task.status}${code===null?'':` (exit ${code})`}${task.error?`: ${task.error}`:''}`);
+      this.flushTaskLogs(id);
       owned.resolve(task); this.changed();for(const f of this.completions){try{f(task);}catch{}}
     };
     child.once('spawn',()=>{if(!owned.reason)task.status='running';this.changed();});
@@ -90,10 +121,19 @@ export class TaskManager {
       task.logs.push(entry);owned.memory+=Buffer.byteLength(entry.text);
       while(owned.memory>this.maxMemoryBytes||task.logs.length>2000){const old=task.logs.shift()!;owned.memory-=Buffer.byteLength(old.text);task.dropped++;}
       task.latest=entry.text.trim().slice(-160)||task.latest;
-      if(!task.diskTruncated){const line=JSON.stringify(entry)+'\n';const bytes=Buffer.byteLength(line);if(owned.bytes+bytes>this.maxLogBytes)task.diskTruncated=true;
-        else try{appendFileSync(task.logPath,line);owned.bytes+=bytes;}catch(error:any){task.diskTruncated=true;task.error=`Log persistence failed: ${error.message}`;}}
+      if(!task.diskTruncated){
+        const line=JSON.stringify(entry)+'\n';const bytes=Buffer.byteLength(line);
+        if(owned.bytes+bytes>this.maxLogBytes)task.diskTruncated=true;
+        else {
+          owned.bytes+=bytes;
+          const currentBuf=(this.logBuffers.get(task.id)||'')+line;
+          this.logBuffers.set(task.id,currentBuf);
+          if(currentBuf.length>8192) this.flushTaskLogs(task.id);
+          else if(!this.flushTimer) this.flushTimer=setTimeout(()=>{this.flushTimer=undefined;this.flushAllLogs();},100);
+        }
+      }
     }
-    this.changed();
+    this.scheduleChanged();
   }
   async stop(id:string):Promise<TaskRecord> { return this.stopWithReason(id,'stopped'); }
   private async stopWithReason(id:string,reason:'stopped'|'timed_out'):Promise<TaskRecord>{
@@ -113,6 +153,8 @@ export class TaskManager {
   }
   async dispose():Promise<void>{
     this.closed=true;
+    this.flushAllLogs();
+    if(this.changedTimer){clearTimeout(this.changedTimer);this.changedTimer=undefined;}
     const results=await Promise.allSettled(this.list().filter(t=>activeTask(t)||this.owned.get(t.id)?.stopPromise).map(t=>this.owned.get(t.id)?.stopPromise??this.stop(t.id)));
     this.listeners.clear();this.completions.clear();
     const failed=results.find(r=>r.status==='rejected');if(failed?.status==='rejected')throw failed.reason;
