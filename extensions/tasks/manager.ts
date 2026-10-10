@@ -14,7 +14,9 @@ export interface LaunchSpec {
   transform?: (stream: 'stdout' | 'stderr', text: string) => { stream: LogStream; text: string }[];
   summarize?: () => { result?: string; error?: string };
 }
-interface Owned { child: ChildProcess; done: Promise<TaskRecord>; resolve: (t: TaskRecord)=>void; timeout?: NodeJS.Timeout; escalation?: NodeJS.Timeout; stopPromise?: Promise<TaskRecord>; reason?: 'stopped' | 'timed_out'; bytes: number; memory: number; seq: number; finished: boolean }
+interface Owned { child: ChildProcess; done: Promise<TaskRecord>; resolve: (t: TaskRecord)=>void; timeout?: NodeJS.Timeout; escalation?: NodeJS.Timeout; stopPromise?: Promise<TaskRecord>; reason?: 'stopped' | 'timed_out'; bytes: number; memory: number; seq: number; finished: boolean; pending?: { stream: LogStream; text: string }; flush?: NodeJS.Timeout }
+/** Streamed output is coalesced so token-sized deltas become readable entries and disk writes/redraws stay bounded. */
+const ENTRY_CHARS = 1024; const FLUSH_MS = 150;
 export const cleanOutput = (text:string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,'').replace(/\r/g,'');
 export class TaskManager {
   private tasks = new Map<string,TaskRecord>();
@@ -83,17 +85,34 @@ export class TaskManager {
   }
   private append(task:TaskRecord,stream:LogStream,text:string) {
     const owned=this.owned.get(task.id);if(!owned||!text)return;
-    const clean=cleanOutput(text);
+    const clean=cleanOutput(text);if(!clean)return;
+    if(owned.pending&&owned.pending.stream!==stream)this.seal(task,owned);
+    if(stream==='system'){this.write(task,owned,stream,clean);this.changed();return;}
+    owned.pending??={stream,text:''};owned.pending.text+=clean;
+    if(owned.pending.text.length>=ENTRY_CHARS){
+      // Emit full entries now and keep the remainder pending, so a flood still respects bounds.
+      const full=owned.pending.text.length-owned.pending.text.length%ENTRY_CHARS;
+      const rest=owned.pending.text.slice(full);this.write(task,owned,stream,owned.pending.text.slice(0,full));
+      owned.pending=rest?{stream,text:rest}:undefined;if(!rest){clearTimeout(owned.flush);owned.flush=undefined;}
+      this.changed();
+    }
+    if(owned.pending&&!owned.flush){owned.flush=setTimeout(()=>{owned.flush=undefined;if(this.seal(task,owned))this.changed();},FLUSH_MS);owned.flush.unref?.();}
+  }
+  private seal(task:TaskRecord,owned:Owned):boolean{
+    clearTimeout(owned.flush);owned.flush=undefined;
+    const pending=owned.pending;owned.pending=undefined;
+    if(!pending?.text)return false;this.write(task,owned,pending.stream,pending.text);return true;
+  }
+  private write(task:TaskRecord,owned:Owned,stream:LogStream,clean:string) {
     // Bound single entries too, so a flood without newlines cannot pin memory.
-    for(let i=0;i<clean.length;i+=1024){
-      const entry:LogEntry={seq:++owned.seq,time:Date.now(),stream,text:clean.slice(i,i+1024)};
+    for(let i=0;i<clean.length;i+=ENTRY_CHARS){
+      const entry:LogEntry={seq:++owned.seq,time:Date.now(),stream,text:clean.slice(i,i+ENTRY_CHARS)};
       task.logs.push(entry);owned.memory+=Buffer.byteLength(entry.text);
       while(owned.memory>this.maxMemoryBytes||task.logs.length>2000){const old=task.logs.shift()!;owned.memory-=Buffer.byteLength(old.text);task.dropped++;}
       task.latest=entry.text.trim().slice(-160)||task.latest;
       if(!task.diskTruncated){const line=JSON.stringify(entry)+'\n';const bytes=Buffer.byteLength(line);if(owned.bytes+bytes>this.maxLogBytes)task.diskTruncated=true;
         else try{appendFileSync(task.logPath,line);owned.bytes+=bytes;}catch(error:any){task.diskTruncated=true;task.error=`Log persistence failed: ${error.message}`;}}
     }
-    this.changed();
   }
   async stop(id:string):Promise<TaskRecord> { return this.stopWithReason(id,'stopped'); }
   private async stopWithReason(id:string,reason:'stopped'|'timed_out'):Promise<TaskRecord>{

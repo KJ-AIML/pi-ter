@@ -55,3 +55,15 @@ test('POSIX retains inherited pipes after its immediate child exits', {skip:proc
  try{await until(()=>a.logs.some(l=>l.text.includes('descendant-ready')));}catch(error){throw new Error(JSON.stringify({status:a.status,error:a.error,logs:a.logs}),{cause:error});}
  await m.stop(a.id);assert.equal(a.status,'stopped');
 });
+
+test('token-sized deltas are coalesced into readable entries, keeping stream order and flushing on exit',async t=>{
+ const m=setup(t);
+ const code="const w=(s,t)=>new Promise(r=>setTimeout(()=>{s.write(t);r()},2));(async()=>{for(const p of ['I','\\'ll ','start ','with ','read','-only ','checks.\\n'])await w(process.stdout,p);await w(process.stderr,'warn\\n');for(const p of ['do','ne'])await w(process.stdout,p);})()";
+ const a=m.start(launch(code)); await until(()=>a.status==='completed');
+ const out=a.logs.filter(l=>l.stream!=='system');
+ assert.deepEqual(out.map(l=>[l.stream,l.text]),[['stdout',"I'll start with read-only checks.\n"],['stderr','warn\n'],['stdout','done']]);
+ assert.ok(out.every((l,i)=>i===0||l.seq>out[i-1].seq));
+ const disk=readFileSync(a.logPath,'utf8').trim().split('\n').map(l=>JSON.parse(l));
+ assert.equal(disk.length,a.logs.length,'every sealed entry is persisted once');
+ assert.equal(disk.at(-1).stream,'system');
+});
