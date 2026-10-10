@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 /** A private git worktree for one writer subagent, on its own branch off the source HEAD. */
 export interface AgentWorktree { repo: string; path: string; branch: string; base: string; cwd: string }
@@ -25,8 +25,10 @@ export function createWorktree(cwd: string, id: string): AgentWorktree {
   const path = join(root, id); const branch = `piter/${id}`;
   try { git(repo, ['worktree', 'add', '-q', '-b', branch, path, base]); }
   catch (error: any) { throw new Error(`git worktree add failed: ${String(error.stderr || error.message).trim()}`); }
-  const sub = relative(repo, resolve(cwd));
-  const inside = sub && !sub.startsWith('..') && !isAbsolute(sub) ? join(path, sub) : path;
+  // Ask git for the sub-folder: comparing paths breaks on Windows short (8.3) names and slash styles.
+  let sub = '';
+  try { sub = git(cwd, ['rev-parse', '--show-prefix']).replace(/\/$/, ''); } catch {}
+  const inside = sub && !sub.split('/').includes('..') ? join(path, ...sub.split('/')) : path;
   return { repo, path, branch, base, cwd: existsSync(inside) ? inside : path };
 }
 
