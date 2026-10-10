@@ -1,13 +1,34 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { getPackageDir } from '@earendil-works/pi-coding-agent';
 import { join, basename } from 'node:path';
 import type { LaunchSpec } from './manager.ts';
-import type { LogStream, TaskProgress, TaskUsage } from './types.ts';
+import type { AgentMessageMode, LogStream, TaskProgress, TaskUsage } from './types.ts';
 type Entry = { stream: LogStream; text: string };
 const contentText = (content: any): string => Array.isArray(content) ? content.filter(p=>p?.type==='text').map(p=>p.text||'').join('\n') : typeof content==='string'?content:'';
 
+/**
+ * Client end of Pi's RPC protocol for one child: sends the task as the first prompt, forwards
+ * steering/follow-up messages, and closes stdin (an orderly shutdown) once the child has settled.
+ */
+export class RpcLink {
+  private write?: (text: string) => void; private end?: () => void;
+  private seq = 0; closed = false;
+  private task: string;
+  constructor(task: string) { this.task = task; }
+  attach(write: (text: string) => void, end: () => void) { this.write = write; this.end = end; this.record({ id: 'start', type: 'prompt', message: this.task }); }
+  record(value: Record<string, unknown>) { if (this.closed || !this.write) throw new Error('Subagent input is closed'); this.write(JSON.stringify(value) + '\n'); }
+  send(mode: AgentMessageMode, message: string) {
+    if (!message.trim()) throw new Error('Message is required');
+    this.record({ id: `msg-${++this.seq}`, type: mode === 'steer' ? 'steer' : 'follow_up', message });
+  }
+  finish() { if (this.closed) return; this.closed = true; this.end?.(); }
+}
+const DIALOGS = new Set(['select', 'confirm', 'input', 'editor']);
+
 /** Decode Pi's public JSON event stream; thinking content is intentionally not displayed. */
 export class AgentOutput {
+  private link?: RpcLink;
+  constructor(link?: RpcLink) { this.link = link; }
   private buffer=''; private overflow=false; private error?:string; private result=''; private streamed=false;
   private toolText=new Map<string,string>();
   private usage:TaskUsage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:0,turns:0};
@@ -38,6 +59,22 @@ export class AgentOutput {
   private decode(line:string):Entry[]{
     if(!line.trim())return [];
     let e:any;try{e=JSON.parse(line);}catch{return [{stream:'stdout',text:line.slice(0,4096)}];}
+    if(e.type==='response'&&this.link){
+      if(e.success===false){
+        const message=`${e.command||'command'} rejected: ${e.error||'unknown error'}`;
+        if(e.id==='start'){this.error=message;this.link.finish();}
+        return [{stream:'system',text:message}];
+      }
+      // A prompt consumed by an extension command starts no run, so nothing will settle.
+      if(e.id==='start'&&e.data?.disposition==='handled')this.link.finish();
+      return [];
+    }
+    if(e.type==='extension_ui_request'&&this.link){
+      // Nobody can answer a child's dialog; cancel it so the child never blocks.
+      if(DIALOGS.has(e.method)){try{this.link.record({type:'extension_ui_response',id:e.id,cancelled:true});}catch{}return [{stream:'system',text:`Cancelled extension dialog: ${String(e.title||e.method).slice(0,200)}`}];}
+      return [];
+    }
+    if(e.type==='agent_settled'&&this.link){this.link.finish();return [];}
     if(e.type==='message_start'){this.streamed=false;if(e.message?.role==='assistant'){this.turnsStarted++;this.current={tokens:0,cost:0};}return [];}
     if(e.type==='message_update'&&e.usage&&typeof e.usage==='object'){
       const n=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:0;
@@ -113,18 +150,35 @@ export const ROLES:Record<AgentRole,{access:AgentAccess;thinking?:string;prompt:
   worker:{access:'full',prompt:'You are an implementation subagent. Make the smallest change that completes the task, stay inside the stated scope, run the relevant checks, and finish with the files changed, verification results and residual risks.'},
 };
 export const MAX_INSTRUCTIONS=8000;
-export function agentLaunch(options:{task:string;title:string;cwd:string;provider:string;model:string;thinking?:string;timeoutMs?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[];role?:AgentRole;instructions?:string;parentThinking?:string}):LaunchSpec{
+export type AgentLaunchOptions={task:string;title:string;cwd:string;provider:string;model:string;thinking?:string;timeoutMs?:number;access?:AgentAccess;tools?:string[];excludeTools?:string[];role?:AgentRole;instructions?:string;parentThinking?:string;
+  /** Private folder for the child's saved session (enables continuing it later). */
+  sessionDir:string;
+  /** Session file to resume instead of starting a new conversation. */
+  sessionFile?:string};
+/** Newest saved session in a subagent's private session folder. */
+export function latestSession(dir:string):string|undefined{
+  let best:{path:string;time:number}|undefined;
+  try{for(const name of readdirSync(dir)){if(!name.endsWith('.jsonl'))continue;const path=join(dir,name);const time=statSync(path).mtimeMs;if(!best||time>best.time)best={path,time};}}catch{return undefined;}
+  return best?.path;
+}
+export function agentLaunch(options:AgentLaunchOptions):LaunchSpec{
   const role=options.role?ROLES[options.role]:undefined;if(options.role&&!role)throw new Error(`Unknown role: ${options.role}`);
   const thinking=options.thinking??role?.thinking??options.parentThinking;
   if(thinking&&!(THINKING_LEVELS as readonly string[]).includes(thinking))throw new Error(`Unknown thinking level: ${thinking}`);
   const extra=options.instructions?.trim()??'';if(extra.length>MAX_INSTRUCTIONS)throw new Error(`instructions exceed ${MAX_INSTRUCTIONS} characters`);
+  if(!options.sessionDir)throw new Error('sessionDir is required');
   // The heading keeps the value multi-line so Pi never mistakes it for a file path.
   const prompt=[role&&`## Subagent role: ${options.role}\n${role.prompt}`,extra&&`## Subagent instructions\n${extra}`].filter(Boolean).join('\n\n');
-  const limits=toolArgs({...options,access:options.access??role?.access});const parser=new AgentOutput();const invocation=piInvocation();
+  const limits=toolArgs({...options,access:options.access??role?.access});
+  const link=new RpcLink(options.task);const parser=new AgentOutput(link);const invocation=piInvocation();
+  const {task:_task,timeoutMs:_timeout,sessionFile:_file,sessionDir,parentThinking:_parent,...kept}=options;
   return {
     kind:'agent',title:options.title,cwd:options.cwd,command:'Pi subagent',model:`${options.provider}/${options.model}`,
-    executable:invocation.executable,args:[...invocation.args,'--mode','json','--print','--no-session','--provider',options.provider,'--model',options.model,...(thinking?['--thinking',thinking]:[]),...limits,...(prompt?['--append-system-prompt',prompt]:[])],
+    executable:invocation.executable,args:[...invocation.args,'--mode','rpc','--session-dir',sessionDir,...(options.sessionFile?['--session',options.sessionFile]:[]),'--provider',options.provider,'--model',options.model,...(thinking?['--thinking',thinking]:[]),...limits,...(prompt?['--append-system-prompt',prompt]:[])],
     input:options.task,env:{...process.env,PITER_SUBAGENT:'1',PI_SPLASH:'0'},timeoutMs:options.timeoutMs,
     transform:(stream,text)=>parser.consume(stream,text),summarize:()=>parser.summary(),progress:()=>parser.progress(),
+    interactive:{attach:(write,end)=>link.attach(write,end),send:(mode,message)=>link.send(mode,message)},
+    // Resolved thinking is stored so a continued run keeps the same level.
+    agent:{sessionDir,options:{...kept,...(thinking?{thinking}:{})}},
   };
 }

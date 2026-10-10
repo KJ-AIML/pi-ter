@@ -12,7 +12,7 @@ test('registered terminal tool streams, reports completion and stops on session 
  const controller=registerTasks(pi,{logRoot:root});t.after(()=>controller.dispose());
  const ctx:any={cwd:process.cwd(),hasUI:false,sessionManager:{getSessionId:()=> 's1'},model:{provider:'test',id:'model'},ui:{}};
  await events.get('session_start')!({},ctx);
- assert.equal(tools.size,5);assert.ok(tools.has('piter_task_wait'));assert.ok(commands.has('tasks'));assert.ok(commands.has('piter-tasks'));assert.ok(shortcuts.includes('ctrl+alt+t'));
+ assert.equal(tools.size,6);assert.ok(tools.has('piter_task_wait'));assert.ok(tools.has('piter_task_send'));assert.ok(commands.has('tasks'));assert.ok(commands.has('piter-tasks'));assert.ok(shortcuts.includes('ctrl+alt+t'));
  const r=await tools.get('piter_terminal').execute('x',{command:process.platform==='win32'?'Write-Output test-output':'printf test-output'},undefined,undefined,ctx);
  const id=r.details.id;let end=Date.now()+5000;while(!messages.length&&Date.now()<end)await sleep(20);
  assert.equal(messages.length,1);assert.match(messages[0].m.content,/test-output/);assert.equal(messages[0].o.deliverAs,'followUp');

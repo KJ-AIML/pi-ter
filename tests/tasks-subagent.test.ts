@@ -13,8 +13,17 @@ test('truncated final JSON and oversized lines cannot grow parser unbounded',()=
  const p=new AgentOutput();p.consume('stdout','a'.repeat(1100000));assert.ok(p.summary().error); const q=new AgentOutput();q.consume('stdout',JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'done'}],stopReason:'stop'}}));assert.equal(q.summary().result,'done');
 });
 test('launch uses stdin for task and explicitly inherits model, provider and recursion guard',()=>{
- const s=agentLaunch({task:'Review "x" & y\nnew line',title:'Review',cwd:process.cwd(),provider:'custom',model:'test-model',thinking:'low'});
- assert.equal(s.input,'Review "x" & y\nnew line');assert.ok(s.args.includes('--provider'));assert.ok(s.args.includes('custom'));assert.ok(s.args.includes('test-model'));assert.equal(s.env!.PITER_SUBAGENT,'1');assert.ok(s.args.includes('--no-session'));assert.ok(!s.args.includes(s.input!));
+ const s=agentLaunch({task:'Review "x" & y\nnew line',title:'Review',cwd:process.cwd(),provider:'custom',model:'test-model',sessionDir:'/tmp/piter-s',thinking:'low'});
+ assert.equal(s.input,'Review "x" & y\nnew line');assert.ok(s.args.includes('--provider'));assert.ok(s.args.includes('custom'));assert.ok(s.args.includes('test-model'));assert.equal(s.env!.PITER_SUBAGENT,'1');assert.ok(!s.args.includes(s.input!));
+ assert.equal(s.args[s.args.indexOf('--mode')+1],'rpc');assert.equal(s.args[s.args.indexOf('--session-dir')+1],'/tmp/piter-s');assert.ok(!s.args.includes('--no-session'));
+ const written:string[]=[];let ended=0;s.interactive!.attach(t=>written.push(t),()=>ended++);
+ assert.deepEqual(JSON.parse(written[0]),{id:'start',type:'prompt',message:'Review "x" & y\nnew line'},'task goes over stdin as the first RPC prompt');
+ s.interactive!.send('steer','focus on auth');s.interactive!.send('followUp','then summarize');
+ assert.deepEqual(written.slice(1).map(w=>{const r=JSON.parse(w);return [r.type,r.message];}),[['steer','focus on auth'],['follow_up','then summarize']]);
+ s.transform!('stdout',JSON.stringify({type:'extension_ui_request',id:'ui1',method:'confirm',title:'Allow?'})+'\n');
+ assert.deepEqual(JSON.parse(written.at(-1)!),{type:'extension_ui_response',id:'ui1',cancelled:true},'child dialogs are cancelled, never left hanging');
+ assert.equal(ended,0);s.transform!('stdout',JSON.stringify({type:'agent_settled'})+'\n');assert.equal(ended,1,'stdin closes once the child settles');
+ assert.throws(()=>s.interactive!.send('steer','late'),/closed/);
 });
 test('tool access options map to enforced Pi CLI flags and reject injection',async()=>{
  const {toolArgs}=await import('../extensions/tasks/subagent.ts');
@@ -24,10 +33,10 @@ test('tool access options map to enforced Pi CLI flags and reject injection',asy
  assert.deepEqual(toolArgs({tools:['read',' read '],excludeTools:['web_search']}),['--tools','read','--exclude-tools','web_search']);
  assert.throws(()=>toolArgs({tools:['read,bash']}),/Invalid tools/);assert.throws(()=>toolArgs({excludeTools:['--x y']}),/Invalid excludeTools/);
  assert.throws(()=>toolArgs({access:'admin' as any}),/Unknown access/);
- const s=agentLaunch({task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m',access:'read-only'});assert.ok(s.args.includes('--exclude-tools'));
+ const s=agentLaunch({task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m',sessionDir:'/tmp/piter-s',access:'read-only'});assert.ok(s.args.includes('--exclude-tools'));
 });
 test('role presets set access, thinking and prompt; explicit options win',()=>{
- const base={task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m'};
+ const base={task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m',sessionDir:'/tmp/piter-s'};
  const flag=(args:string[],name:string)=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
  const scout=agentLaunch({...base,role:'scout',parentThinking:'high'}).args;
  assert.equal(flag(scout,'--thinking'),'low');assert.equal(flag(scout,'--tools'),'read,grep,find,ls');assert.match(flag(scout,'--append-system-prompt')!,/Subagent role: scout/);
@@ -56,4 +65,9 @@ test('live progress counts turns, tool calls and streaming tokens before the tur
  send({type:'message_start',message:{role:'assistant'}});
  send({type:'message_update',usage:{totalTokens:300},assistantMessageEvent:{type:'text_delta',delta:'x'}});
  assert.deepEqual(p.progress(),{turns:2,tools:2,tokens:1300,cost:0.02},'finished usage is not double counted');
+});
+test('a rejected first prompt fails the task and closes the child',()=>{
+ const s=agentLaunch({task:'t',title:'t',cwd:process.cwd(),provider:'p',model:'m',sessionDir:'/tmp/piter-s'});let ended=0;s.interactive!.attach(()=>{},()=>ended++);
+ const out=s.transform!('stdout',JSON.stringify({id:'start',type:'response',command:'prompt',success:false,error:'No model'})+'\n');
+ assert.equal(ended,1);assert.match(out[0].text,/prompt rejected: No model/);assert.match(s.summarize!().error!,/No model/);
 });

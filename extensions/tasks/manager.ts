@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { stripVTControlCharacters } from 'node:util';
-import { activeTask, type LogEntry, type LogStream, type TaskKind, type TaskProgress, type TaskRecord, type TaskUsage } from './types.ts';
+import { activeTask, type AgentMessageMode, type AgentSessionInfo, type LogEntry, type LogStream, type TaskKind, type TaskProgress, type TaskRecord, type TaskUsage } from './types.ts';
 import { signalTree } from './process.ts';
 
 export interface LaunchSpec {
@@ -14,8 +14,11 @@ export interface LaunchSpec {
   transform?: (stream: 'stdout' | 'stderr', text: string) => { stream: LogStream; text: string }[];
   summarize?: () => { result?: string; error?: string; usage?: TaskUsage };
   progress?: () => TaskProgress;
+  /** Long-lived stdin protocol (Pi RPC): stdin stays open; the spec writes records and ends stdin itself. */
+  interactive?: { attach(write: (text: string) => void, end: () => void): void; send(mode: AgentMessageMode, message: string): void };
+  agent?: AgentSessionInfo;
 }
-interface Owned { child: ChildProcess; done: Promise<TaskRecord>; resolve: (t: TaskRecord)=>void; timeout?: NodeJS.Timeout; escalation?: NodeJS.Timeout; stopPromise?: Promise<TaskRecord>; reason?: 'stopped' | 'timed_out'; bytes: number; memory: number; seq: number; finished: boolean; pending?: { stream: LogStream; text: string }; flush?: NodeJS.Timeout }
+interface Owned { spec: LaunchSpec; child: ChildProcess; done: Promise<TaskRecord>; resolve: (t: TaskRecord)=>void; timeout?: NodeJS.Timeout; escalation?: NodeJS.Timeout; stopPromise?: Promise<TaskRecord>; reason?: 'stopped' | 'timed_out'; bytes: number; memory: number; seq: number; finished: boolean; pending?: { stream: LogStream; text: string }; flush?: NodeJS.Timeout }
 /** Streamed output is coalesced so token-sized deltas become readable entries and disk writes/redraws stay bounded. */
 const ENTRY_CHARS = 1024; const FLUSH_MS = 150;
 export const cleanOutput = (text:string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,'').replace(/\r/g,'');
@@ -46,10 +49,11 @@ export class TaskManager {
     if(spec.timeoutMs !== undefined && (!Number.isFinite(spec.timeoutMs)||spec.timeoutMs<0)) throw new Error('Invalid timeout');
     for(const old of this.list().filter(t=>!activeTask(t)).slice(0,Math.max(0,this.tasks.size-49))) {
       this.tasks.delete(old.id); this.owned.delete(old.id); try{unlinkSync(old.logPath);}catch{} if(old.resultPath)try{unlinkSync(old.resultPath);}catch{}
+      if(old.agent&&!this.list().some(t=>t!==old&&t.agent?.sessionDir===old.agent!.sessionDir))try{rmSync(old.agent.sessionDir,{recursive:true,force:true});}catch{}
     }
     const id=randomUUID(); const logPath=join(this.options.logDir,`${id}.jsonl`);
     writeFileSync(logPath,'',{flag:'wx',mode:0o600});
-    const task:TaskRecord={id,kind:spec.kind,title:cleanOutput(spec.title).slice(0,200),cwd:spec.cwd,command:spec.command,model:spec.model,status:'starting',startedAt:Date.now(),latest:'Starting',logPath,logs:[],dropped:0,diskTruncated:false};
+    const task:TaskRecord={id,kind:spec.kind,title:cleanOutput(spec.title).slice(0,200),cwd:spec.cwd,command:spec.command,model:spec.model,status:'starting',startedAt:Date.now(),latest:'Starting',logPath,logs:[],dropped:0,diskTruncated:false,agent:spec.agent};
     this.tasks.set(id,task);
     let resolve!:(task:TaskRecord)=>void; const done=new Promise<TaskRecord>(r=>{resolve=r;});
     let child:ChildProcess;
@@ -57,7 +61,7 @@ export class TaskManager {
     const args=process.platform==='win32'?[fileURLToPath(new URL('./windows-supervisor.mjs',import.meta.url)),spec.executable,...spec.args]:spec.args;
     try { child=spawn(executable,args,{cwd:spec.cwd,env:spec.env ?? process.env,detached:process.platform!=='win32',windowsHide:true,stdio:['pipe','pipe','pipe']}); }
     catch(error:any) { task.status='failed';task.error=String(error.message);task.endedAt=Date.now();resolve(task); this.changed();queueMicrotask(()=>{for(const f of this.completions)f(task);});return task; }
-    const owned:Owned={child,done,resolve,bytes:0,memory:0,seq:0,finished:false}; this.owned.set(id,owned); task.pid=child.pid;
+    const owned:Owned={spec,child,done,resolve,bytes:0,memory:0,seq:0,finished:false}; this.owned.set(id,owned); task.pid=child.pid;
     const finish=(code:number|null,signal:NodeJS.Signals|null) => {
       if(owned.finished) return; owned.finished=true;
       clearTimeout(owned.timeout);
@@ -90,7 +94,11 @@ export class TaskManager {
       if(process.platform!=='win32'&&!owned.reason){void signalTree(child,true).then(()=>finish(code,signal),error=>{task.error=error.message;finish(code,signal);});}
       else finish(code,signal);
     });
-    child.stdin?.on('error',()=>{});child.stdin?.end(spec.input);
+    child.stdin?.on('error',()=>{});
+    if(spec.interactive){
+      const stdin=child.stdin;
+      spec.interactive.attach(text=>{if(stdin&&!stdin.writableEnded&&!stdin.destroyed)stdin.write(text);},()=>{if(stdin&&!stdin.writableEnded)stdin.end();});
+    }else child.stdin?.end(spec.input);
     const timeout=spec.timeoutMs ?? 30*60*1000;
     if(timeout>0)owned.timeout=setTimeout(()=>{void this.stopWithReason(id,'timed_out').catch(error=>{task.error=error.message;this.changed();});},timeout);
     this.changed();return task;
@@ -136,6 +144,17 @@ export class TaskManager {
     try{const winner=await Promise.race([owned.done,deadline]);return {task,timedOut:winner==='timeout'&&activeTask(task)};}
     finally{clearTimeout(timer);if(onAbort)signal?.removeEventListener('abort',onAbort);}
   }
+  /** Send a steering or follow-up message to a running interactive task. */
+  send(id:string,mode:AgentMessageMode,message:string):TaskRecord{
+    const task=this.tasks.get(id);if(!task)throw new Error('Unknown task ID in this session');
+    const owned=this.owned.get(id);
+    if(!owned||!activeTask(task)||owned.finished)throw new Error(`Task ${id} is ${task.status}; it no longer accepts messages${task.agent?' (start a new run with continueFrom)':''}`);
+    if(!owned.spec.interactive)throw new Error('Only subagents accept messages; terminals have no input channel');
+    owned.spec.interactive.send(mode,message);
+    this.append(task,'system',`→ ${mode==='steer'?'steer':'follow-up'}: ${message}`);
+    return task;
+  }
+  get logDir():string{ return this.options.logDir; }
   async stop(id:string):Promise<TaskRecord> { return this.stopWithReason(id,'stopped'); }
   private async stopWithReason(id:string,reason:'stopped'|'timed_out'):Promise<TaskRecord>{
     const task=this.tasks.get(id);if(!task)throw new Error('Unknown task ID in this session');
