@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { copyToClipboard } from './clipboard.ts';
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { activeTask, type LogEntry, type LogStream, type TaskRecord, type TaskSource } from './types.ts';
 
@@ -8,7 +8,8 @@ const cyan = text;
 const purple = accent;
 const dim = muted;
 const streams: Array<'all' | LogStream> = ['all', 'stdout', 'stderr', 'agent', 'tool', 'system'];
-interface DisplayLogLine { key: string; seq: number; text: string }
+/** text is the rendered row; raw/logical identify the untruncated source line so copies are lossless. */
+interface DisplayLogLine { key: string; seq: number; text: string; raw: string; logical: string }
 
 // Task output is untrusted terminal input. Preserve printable text and line boundaries only.
 const safe = (text: string) => text
@@ -50,11 +51,16 @@ export class TasksView {
   private bodyCount = 0;
   private dragFrom: { x: number; y: number } | undefined;
   private dragTo: { x: number; y: number } | undefined;
+  /** Log rows exactly as last rendered, so mouse rows map to what the user sees. */
+  private visible: DisplayLogLine[] = [];
+  private notice = '';
+  private frame = { top: 0, left: 0, inner: 0 };
   private source: TaskSource; private requestRender: () => void; private close: () => void;
   private rows: () => number; private quote?: (text: string) => void;
+  private clipboard: (text: string) => Promise<unknown>;
   constructor(source: TaskSource, requestRender: () => void, close: () => void,
-    rows: () => number, initialId?: string, quote?: (text: string) => void) {
-    this.source = source; this.requestRender = requestRender; this.close = close; this.rows = rows; this.quote = quote;
+    rows: () => number, initialId?: string, quote?: (text: string) => void, clipboard: (text: string) => Promise<unknown> = text => copyToClipboard(text)) {
+    this.source = source; this.requestRender = requestRender; this.close = close; this.rows = rows; this.quote = quote; this.clipboard = clipboard;
     this.selectedId = initialId ?? source.list()[0]?.id;
     this.mode = initialId && source.get(initialId) ? 'detail' : 'list';
     this.modal = this.mode === 'detail';
@@ -116,6 +122,7 @@ export class TasksView {
     if (task.dropped || task.diskTruncated) lines.push(dim(` ⚠ ${task.dropped ? `${task.dropped} live log entries dropped` : ''}${task.dropped && task.diskTruncated ? ' · ' : ''}${task.diskTruncated ? 'disk log cap reached' : ''}`));
     const footer = this.confirmStop ? purple(` Stop ${oneLine(task.title)}? y confirm · n/Esc cancel`) :
       this.searchMode ? purple(` /${safe(this.searchDraft)}█  Enter apply · Esc cancel`) :
+      this.notice ? purple(` ${oneLine(this.notice)}`) :
       dim(` w wrap:${this.wrap ? 'on' : 'off'} · Esc:close · Enter:quote · /:search · f:filter · v:select · c:copy`);
     const compact = height < 16;
     const budget = Math.max(1, height - lines.length - (compact ? 3 : 6));
@@ -131,6 +138,7 @@ export class TasksView {
     if (this.scroll > 0 && logLines[start]) this.anchor = { key: logLines[start].key, seq: logLines[start].seq };
     else this.anchor = undefined;
     const body = logLines.slice(start, end);
+    this.visible = body;
     // Inset the frame so it does not sit on the terminal edge or cover a side panel.
     const marginX = !compact && width >= 48 ? 3 : 0;
     const marginY = compact ? 0 : 1;
@@ -141,6 +149,7 @@ export class TasksView {
     const bottom = '╰' + '─'.repeat(Math.max(0, inner - 2)) + '╯';
     const row = (content: string, bar = false) => dim('│') + fit(content, inner - 2) + (bar ? purple('▐') : dim('│'));
     this.bodyTop = marginY + 1 + lines.length + (compact ? 0 : 1);
+    this.frame = { top: marginY, left: marginX, inner };
     this.bodyCount = body.length;
     const markLine = (i: number, raw: string) => {
       const y = this.bodyTop + i;
@@ -165,23 +174,30 @@ export class TasksView {
   private copySelection() {
     const body = this.selectedLogText();
     if (!body) return;
-    const cmd = process.platform === 'darwin' ? 'pbcopy' : process.platform === 'win32' ? 'clip' : 'xclip';
-    try { const child = spawn(cmd, { stdio: ['pipe', 'ignore', 'ignore'] }); child.stdin.end(body); } catch { /* clipboard optional */ }
+    const count = body.split('\n').length;
+    void this.clipboard(body)
+      .then(() => { this.notice = `Copied ${count} line${count === 1 ? '' : 's'}`; })
+      .catch(error => { this.notice = `Copy failed: ${error instanceof Error ? error.message : String(error)}`; })
+      .finally(() => { if (!this.disposed) this.requestRender(); });
+  }
+
+  /** Untruncated text of the given rows; wrapped rows of one source line are copied once. */
+  private rawText(rows: DisplayLogLine[]): string {
+    const seen = new Set<string>(); const out: string[] = [];
+    for (const row of rows) if (row.logical && !seen.has(row.logical)) { seen.add(row.logical); out.push(row.raw); }
+    return out.join('\n');
   }
 
   private selectedLogText(): string {
     const task = this.selectedId ? this.source.get(this.selectedId) : undefined;
     if (!task) return '';
-    const lines = this.logLines(task, 200);
     if (this.dragFrom && this.dragTo) {
       const lo = Math.min(this.dragFrom.y, this.dragTo.y) - this.bodyTop;
       const hi = Math.max(this.dragFrom.y, this.dragTo.y) - this.bodyTop;
-      const plain = (t: string) => t.replace(/\x1b\[[0-9;]*m/g, '');
-      return lines.slice(Math.max(0, lo), hi + 1).map(l => plain(l.text)).join('\n');
+      return this.rawText(this.visible.slice(Math.max(0, lo), hi + 1));
     }
-    if (!this.selecting) return lines.map(l => l.text.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
-    const line = lines[Math.min(this.sel, lines.length - 1)];
-    return line ? line.text.replace(/\x1b\[[0-9;]*m/g, '') : '';
+    if (this.selecting) return this.rawText(this.visible.slice(Math.min(this.sel, this.visible.length - 1)).slice(0, 1));
+    return this.rawText(this.logLines(task, 200));
   }
 
   private logLines(task: TaskRecord, width: number): DisplayLogLine[] {
@@ -201,11 +217,12 @@ export class TasksView {
         if (query && !raw.toLocaleLowerCase().includes(query)) return;
         const prefix = dim(`[${group.stream}] `);
         const rendered = this.wrap ? wrapTextWithAnsi(prefix + raw, width) : [truncateToWidth(prefix + raw, width, '')];
-        rendered.forEach((text, wrapIndex) => lines.push({ key: `${group.first}:${index}:${wrapIndex}`, seq: group.first, text }));
+        const logical = `${group.first}:${index}`;
+        rendered.forEach((text, wrapIndex) => lines.push({ key: `${logical}:${wrapIndex}`, seq: group.first, text, raw, logical }));
       });
     }
     if (!lines.length) {
-      lines.push({ key: 'empty', seq: Number.MAX_SAFE_INTEGER, text: dim(query ? 'No matching log lines.' : 'No logs yet.') });
+      lines.push({ key: 'empty', seq: Number.MAX_SAFE_INTEGER, text: dim(query ? 'No matching log lines.' : 'No logs yet.'), raw: '', logical: '' });
     }
     return lines;
   }
@@ -218,12 +235,24 @@ export class TasksView {
       const inBody = event.y>=this.bodyTop && event.y<this.bodyTop+this.bodyCount;
       if(event.type==='press' && inBody){ this.dragFrom={x:event.x,y:event.y}; this.dragTo={x:event.x,y:event.y}; return {handled:true,capture:true}; }
       if(event.type==='drag' && this.dragFrom){ this.dragTo={x:event.x,y:event.y}; return {handled:true,capture:true,render:true}; }
-      if(event.type==='release' && this.dragFrom){ this.copySelection(); return {handled:true,render:true}; }
+      if(event.type==='release' && this.dragFrom){
+        // A click without movement is not a selection; only real drags copy.
+        const moved=!!this.dragTo&&(this.dragTo.x!==this.dragFrom.x||this.dragTo.y!==this.dragFrom.y);
+        if(moved)this.copySelection();
+        this.dragFrom=undefined;this.dragTo=undefined;
+        return {handled:true,render:true};
+      }
     }
     if(event.button!=='left'||!['press','release','click'].includes(event.type))return;
     if(event.type!=='click')return {handled:true};
     if(this.confirmStop||this.searchMode)return {handled:true};
-    if(this.mode==='detail' && (event.y===0 || event.x>=event.width-6 || (event.y<=this.bodyTop && event.x<6))){ this.close(); return {handled:true}; }
+    if(this.mode==='detail'){
+      // Close only on the two [x] buttons (top border right, title row left) or the very first row.
+      const {top,left,inner}=this.frame;
+      const borderX=event.y===top&&event.x>=left+inner-6&&event.x<left+inner;
+      const titleX=event.y===top+1&&event.x>=left&&event.x<left+6;
+      if(event.y===0||borderX||titleX){ this.close(); return {handled:true}; }
+    }
     if(event.y===0){
       if(this.mode==='list'&&event.x>=1&&event.x<8)this.close();
     }else if(this.mode==='list'){
@@ -234,6 +263,7 @@ export class TasksView {
   }
 
   handleInput(data: string): void {
+    this.notice = '';
     if (this.confirmStop) {
       if (data.toLowerCase() === 'y') {
         this.confirmStop = false;

@@ -162,3 +162,38 @@ test('mouse opens a task row and closes details without typing a command',()=>{
  view.handleMouse({type:'click',button:'left',x:9,y:0} as any);
  assert.equal(closed,1);view.dispose();
 });
+
+test('drag-copy copies the rows on screen (not the start of the log); clicks do not copy',async()=>{
+ const logs=Array.from({length:100},(_,i)=>({seq:i,time:Date.now(),stream:'stdout' as const,text:`line-${i} ${'x'.repeat(i===98?150:0)}\n`}));
+ const copied:string[]=[];const view=new TasksView(new Source([task('t','terminal','Long',{logs})]),()=>{},()=>{},()=>24,'t',undefined,async text=>{copied.push(text);});
+ const rows=clean(view.render(80)).split('\n');
+ const y=rows.findIndex(r=>/\[stdout\] line-\d+/.test(r));const first=Number(/line-(\d+)/.exec(rows[y])![1]);
+ assert.ok(first>50,'view is tailing the log');
+ view.handleMouse({type:'press',button:'left',x:10,y} as any);view.handleMouse({type:'release',button:'left',x:10,y} as any);
+ await new Promise(r=>setTimeout(r,0));assert.equal(copied.length,0,'a plain click does not copy');
+ const at98=rows.findIndex(r=>r.includes('line-98'));
+ view.handleMouse({type:'press',button:'left',x:10,y:at98} as any);view.handleMouse({type:'drag',button:'left',x:20,y:at98+1} as any);view.handleMouse({type:'release',button:'left',x:20,y:at98+1} as any);
+ await new Promise(r=>setTimeout(r,0));
+ assert.deepEqual(copied,[`line-98 ${'x'.repeat(150)}\nline-99 `],'exact untruncated rows under the drag');
+ assert.match(clean(view.render(80)),/Copied 2 lines/);
+ assert.doesNotMatch(view.render(80).join(''),/\x1b\[7m/,'highlight cleared after copy');
+ view.dispose();
+});
+
+test('copy failure is shown in the footer',async()=>{
+ const view=new TasksView(new Source([task('t','terminal','T',{logs:[{seq:1,time:Date.now(),stream:'stdout',text:'hello\n'}]})]),()=>{},()=>{},()=>20,'t',undefined,async()=>{throw new Error('No clipboard tool found');});
+ view.render(80);view.handleInput('c');await new Promise(r=>setTimeout(r,0));
+ assert.match(clean(view.render(80)),/Copy failed: No clipboard tool found/);view.dispose();
+});
+
+test('detail view closes only on its [x] buttons, not anywhere near the right edge',()=>{
+ let closed=0;const logs=Array.from({length:30},(_,i)=>({seq:i,time:Date.now(),stream:'stdout' as const,text:`line-${i}\n`}));
+ const view=new TasksView(new Source([task('t','terminal','T',{logs})]),()=>{},()=>closed++,()=>24,'t');
+ const rows=clean(view.render(80)).split('\n');const body=rows.findIndex(r=>r.includes('line-'));
+ view.handleMouse({type:'click',button:'left',x:78,y:body,width:80} as any);
+ view.handleMouse({type:'click',button:'left',x:2,y:body,width:80} as any);
+ assert.equal(closed,0);
+ const border=rows.findIndex(r=>r.includes('╭'));const x=rows[border].indexOf('[x]');
+ view.handleMouse({type:'click',button:'left',x,y:border,width:80} as any);assert.equal(closed,1);
+ view.dispose();
+});
