@@ -122,9 +122,10 @@ export class TaskManager {
   async wait(id:string,timeoutMs:number,signal?:AbortSignal):Promise<{task:TaskRecord;timedOut:boolean}>{
     const task=this.tasks.get(id);if(!task)throw new Error('Unknown task ID in this session');
     const owned=this.owned.get(id);if(!owned||owned.finished||!activeTask(task))return {task,timedOut:false};
+    if(signal?.aborted)return {task,timedOut:true};
     let timer:NodeJS.Timeout|undefined;let onAbort:(()=>void)|undefined;
     const deadline=new Promise<'timeout'>(resolve=>{timer=setTimeout(()=>resolve('timeout'),Math.max(0,timeoutMs));onAbort=()=>resolve('timeout');signal?.addEventListener('abort',onAbort,{once:true});});
-    try{const winner=await Promise.race([owned.done,deadline]);return {task,timedOut:winner==='timeout'};}
+    try{const winner=await Promise.race([owned.done,deadline]);return {task,timedOut:winner==='timeout'&&activeTask(task)};}
     finally{clearTimeout(timer);if(onAbort)signal?.removeEventListener('abort',onAbort);}
   }
   async stop(id:string):Promise<TaskRecord> { return this.stopWithReason(id,'stopped'); }

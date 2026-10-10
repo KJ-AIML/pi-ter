@@ -84,3 +84,18 @@ test('piter_task_wait returns the result once, without a duplicate follow-up, an
  assert.equal(messages.length,1,'a task that outlived the wait still reports completion');
  await assert.rejects(tools.get('piter_task_wait').execute('x',{id:'nope'},undefined,undefined,ctx),/Unknown/);
 });
+
+test('a completion withheld for a wait that gets cancelled is still delivered as a follow-up',async t=>{
+ const events=new Map<string,Function>();const tools=new Map<string,any>();const messages:any[]=[];
+ const root=mkdtempSync(join(tmpdir(),'piter-wait-abort-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const pi:any={on:(n:string,f:Function)=>events.set(n,f),registerTool:(v:any)=>tools.set(v.name,v),registerCommand(){},registerShortcut(){},sendMessage:(m:any,o:any)=>messages.push({m,o})};
+ const controller=registerTasks(pi,{logRoot:root});t.after(()=>controller.dispose());
+ const ctx:any={cwd:process.cwd(),hasUI:false,model:{provider:'test',id:'model'},ui:{}};
+ await events.get('session_start')!({},ctx);
+ const abort=new AbortController();
+ // The user cancels at the exact moment the task completes.
+ controller.getManager()!.onComplete(()=>abort.abort());
+ const r=await tools.get('piter_terminal').execute('a',{command:process.platform==='win32'?'Start-Sleep -Milliseconds 200; Write-Output late':'sleep 0.2; printf late'},undefined,undefined,ctx);
+ await tools.get('piter_task_wait').execute('w',{id:r.details.id,timeout:10},abort.signal,undefined,ctx);
+ assert.equal(messages.length,1,'result not lost');assert.match(messages[0].m.content,/late/);
+});

@@ -67,3 +67,13 @@ test('token-sized deltas are coalesced into readable entries, keeping stream ord
  assert.equal(disk.length,a.logs.length,'every sealed entry is persisted once');
  assert.equal(disk.at(-1).stream,'system');
 });
+
+test('wait returns at once for an already-cancelled call and never reports a finished task as timed out',async t=>{
+ const m=setup(t);const a=m.start(launch('setInterval(()=>{},100)'));await until(()=>a.status==='running');
+ const began=Date.now();const r=await m.wait(a.id,10000,AbortSignal.abort());
+ assert.equal(r.timedOut,true);assert.ok(Date.now()-began<500,'did not sit out the full timeout');
+ // Simulate the task finishing in the same instant the deadline fires.
+ setTimeout(()=>{a.status='completed';},10);
+ const raced=await m.wait(a.id,50);assert.equal(raced.timedOut,false);
+ a.status='running';await m.stop(a.id);
+});
