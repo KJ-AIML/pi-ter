@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { registerTasks } from "./tasks/index.ts";
 import { registerToolLines } from "./tool-lines.ts";
 import { styleReply } from "./sentences.ts";
@@ -120,31 +119,6 @@ export default function (pi: ExtensionAPI) {
         `pi-ter active. Subcommands: header, statusbar, fire (awake: ${awakeController.isOnFire() ? "ON" : "OFF"}), ping`,
         "info",
       );
-    },
-  });
-
-  // Register an experimental custom tool
-  pi.registerTool({
-    name: "piter_inspect",
-    label: "Piter Inspect",
-    description: "Inspection helper for pi-ter experiments",
-    parameters: Type.Object({
-      topic: Type.String({ description: "Topic or experiment identifier to inspect" }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `[pi-ter] Inspection topic: ${params.topic} - ready for experimentation.`,
-          },
-        ],
-        details: {
-          topic: params.topic,
-          onFire: awakeController.isOnFire(),
-          timestamp: new Date().toISOString(),
-        },
-      };
     },
   });
 }
