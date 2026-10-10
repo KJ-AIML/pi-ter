@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync,writeFileSync,rmSync } from 'node:fs';
+import { mkdtempSync,writeFileSync,rmSync,readFileSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TaskManager } from '../extensions/tasks/manager.ts';
@@ -34,6 +34,8 @@ test('real Pi CLI child uses configured provider, streams tool activity and retu
  assert.equal(task.status,'completed',task.logs.map(l=>l.text).join(''));
  assert.match(task.result!,/Verified fixture/);assert.ok(task.logs.some(l=>l.stream==='tool'&&l.text.includes('read')));
  assert.equal(requests.length,2);
+ assert.equal(task.usage?.turns,2,'usage counts both assistant turns');
+ assert.ok(task.resultPath&&readFileSync(task.resultPath,'utf8').includes('Verified fixture'),'final result saved to a file');
  const tools=requests[0].tools.map((v:any)=>v.function.name);
  assert.ok(!tools.includes('piter_agent'));assert.ok(!tools.includes('piter_terminal'));
  assert.ok(requests[1].messages.some((m:any)=>m.role==='tool'&&JSON.stringify(m.content).includes('fixture file content')));

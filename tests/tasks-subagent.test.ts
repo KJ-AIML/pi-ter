@@ -38,3 +38,9 @@ test('role presets set access, thinking and prompt; explicit options win',()=>{
  const only=agentLaunch({...base,instructions:'README.md'}).args;assert.match(flag(only,'--append-system-prompt')!,/\n/,'never a bare path');
  assert.throws(()=>agentLaunch({...base,thinking:'turbo'}),/thinking/);assert.throws(()=>agentLaunch({...base,role:'boss' as any}),/role/);assert.throws(()=>agentLaunch({...base,instructions:'x'.repeat(8001)}),/instructions/);
 });
+test('usage is summed across assistant turns and ignores malformed values',()=>{
+ const p=new AgentOutput();const end=(usage:any,text='')=>JSON.stringify({type:'message_end',message:{role:'assistant',content:text?[{type:'text',text}]:[],stopReason:'stop',usage}})+'\n';
+ p.consume('stdout',end({input:100,output:20,cacheRead:5,cacheWrite:0,totalTokens:125,cost:{total:0.01}})+end({input:-5,output:'x',totalTokens:30,cost:{total:0.002}},'final'));
+ const s=p.summary();assert.equal(s.result,'final');assert.deepEqual({...s.usage,cost:Number(s.usage!.cost.toFixed(4))},{input:100,output:20,cacheRead:5,cacheWrite:0,totalTokens:155,cost:0.012,turns:2});
+ assert.equal(new AgentOutput().summary().usage,undefined);
+});

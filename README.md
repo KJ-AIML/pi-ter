@@ -167,8 +167,9 @@ Closing the viewer does not stop work. Stop an infinite loop from Tasks when don
 | Tool | Parameters and behavior |
 | --- | --- |
 | `piter_terminal` | `command`, optional `title`, `cwd`, `shell`, `timeout`; returns task ID immediately |
-| `piter_agent` | `task`, optional `title`, `cwd`, `provider`, `model`, `timeout`; spawns a separate Pi process |
+| `piter_agent` | `task`, optional `title`, `cwd`, `provider`, `model`, `role`, `access`, `tools`, `excludeTools`, `thinking`, `instructions`, `timeout`; spawns a separate Pi process |
 | `piter_tasks` | No ID lists tasks; `id`, optional `after_seq`, `limit` reads logs |
+| `piter_task_wait` | `id`, optional `timeout` (seconds, default 600); waits for one task and returns its result. A waited result is not sent again as a follow-up; timing out leaves the task running |
 | `piter_task_stop` | `id`; stops this session's owned task and its process tree |
 
 The panel tracks work launched through these Pi-ter tools and commands; it does not intercept terminals or subagents created by other extensions.
@@ -188,6 +189,21 @@ instructions and installed extensions load normally; Pi-ter's task tools are dis
 inside the child to prevent recursive Pi-ter spawning. Other extensions retain their
 own behavior. Agents share workspace files, so assign disjoint edits or read-only
 reviews when running concurrently.
+
+Subagent controls:
+
+| Option | Effect |
+| --- | --- |
+| `role` | Preset: `scout` (read-only, `low` thinking), `reviewer` (read-only, `high` thinking), `worker` (full access, parent thinking). Each adds a short role system prompt. Explicit options override the preset |
+| `access` | `full` (default) or `read-only`. Read-only is enforced by the child Pi's tool selection: only `read`, `grep`, `find`, `ls`; `bash`, `edit`, `write` and MCP tools are always denied |
+| `tools` / `excludeTools` | Explicit allowlist / denylist of tool names or patterns (`--tools` / `--exclude-tools`). Deny wins, so `tools` cannot widen read-only |
+| `thinking` | `off` … `max`; defaults to the role preset, then the parent's level |
+| `instructions` | Up to 8,000 characters appended to the child's system prompt |
+
+Finished subagents report duration, turns, tokens and cost (when the provider
+reports usage). The final answer is also saved as `<task-id>.result.md` next to
+the task's JSONL log. Streamed output is merged into readable log entries (sealed on
+stream change, every 1,024 characters, or after 150 ms).
 
 ### Lifetime, logs and limits
 

@@ -12,7 +12,7 @@ test('registered terminal tool streams, reports completion and stops on session 
  const controller=registerTasks(pi,{logRoot:root});t.after(()=>controller.dispose());
  const ctx:any={cwd:process.cwd(),hasUI:false,sessionManager:{getSessionId:()=> 's1'},model:{provider:'test',id:'model'},ui:{}};
  await events.get('session_start')!({},ctx);
- assert.equal(tools.size,4);assert.ok(commands.has('tasks'));assert.ok(commands.has('piter-tasks'));assert.ok(shortcuts.includes('ctrl+alt+t'));
+ assert.equal(tools.size,5);assert.ok(tools.has('piter_task_wait'));assert.ok(commands.has('tasks'));assert.ok(commands.has('piter-tasks'));assert.ok(shortcuts.includes('ctrl+alt+t'));
  const r=await tools.get('piter_terminal').execute('x',{command:process.platform==='win32'?'Write-Output test-output':'printf test-output'},undefined,undefined,ctx);
  const id=r.details.id;let end=Date.now()+5000;while(!messages.length&&Date.now()<end)await sleep(20);
  assert.equal(messages.length,1);assert.match(messages[0].m.content,/test-output/);assert.equal(messages[0].o.deliverAs,'followUp');
@@ -63,4 +63,24 @@ test('fullscreen renderer dispatches real SGR mouse input to the Tasks card',asy
  assert.equal(opens,0,'card click toggles the list instead of opening the overlay');assert.match(widget.render(90).join('\n'),/▾ Tasks/);
  input('\x1b');await sleep(0);assert.equal(tui.hasOverlay(),false);
  input('\x1b[17~');assert.equal(opens,1,'F6 opens without invoking an editor shortcut');
+});
+
+test('piter_task_wait returns the result once, without a duplicate follow-up, and timing out leaves the task running',async t=>{
+ const events=new Map<string,Function>();const tools=new Map<string,any>();const messages:any[]=[];
+ const root=mkdtempSync(join(tmpdir(),'piter-wait-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const pi:any={on:(n:string,f:Function)=>events.set(n,f),registerTool:(v:any)=>tools.set(v.name,v),registerCommand(){},registerShortcut(){},sendMessage:(m:any,o:any)=>messages.push({m,o})};
+ const controller=registerTasks(pi,{logRoot:root});t.after(()=>controller.dispose());
+ const ctx:any={cwd:process.cwd(),hasUI:false,model:{provider:'test',id:'model'},ui:{}};
+ await events.get('session_start')!({},ctx);
+ const win=process.platform==='win32';
+ const quick=await tools.get('piter_terminal').execute('a',{command:win?'Start-Sleep -Milliseconds 300; Write-Output waited-output':'sleep 0.3; printf waited-output'},undefined,undefined,ctx);
+ const done=await tools.get('piter_task_wait').execute('w',{id:quick.details.id,timeout:10},undefined,undefined,ctx);
+ assert.equal(done.details.timedOut,false);assert.equal(done.details.status,'completed');assert.match(done.content[0].text,/waited-output/);assert.ok(done.details.durationMs>=250);
+ await sleep(50);assert.equal(messages.length,0,'waited result is not delivered again');
+ const slow=await tools.get('piter_terminal').execute('b',{command:win?'Start-Sleep -Seconds 20':'sleep 20'},undefined,undefined,ctx);
+ const late=await tools.get('piter_task_wait').execute('w2',{id:slow.details.id,timeout:1},undefined,undefined,ctx);
+ assert.equal(late.details.timedOut,true);assert.equal(late.details.status,'running');assert.match(late.content[0].text,/still running/);
+ await tools.get('piter_task_stop').execute('s',{id:slow.details.id},undefined,undefined,ctx);
+ assert.equal(messages.length,1,'a task that outlived the wait still reports completion');
+ await assert.rejects(tools.get('piter_task_wait').execute('x',{id:'nope'},undefined,undefined,ctx),/Unknown/);
 });

@@ -5,14 +5,14 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { stripVTControlCharacters } from 'node:util';
-import { activeTask, type LogEntry, type LogStream, type TaskKind, type TaskRecord } from './types.ts';
+import { activeTask, type LogEntry, type LogStream, type TaskKind, type TaskRecord, type TaskUsage } from './types.ts';
 import { signalTree } from './process.ts';
 
 export interface LaunchSpec {
   kind: TaskKind; title: string; cwd: string; command: string; executable: string; args: string[];
   env?: NodeJS.ProcessEnv; input?: string; model?: string; timeoutMs?: number;
   transform?: (stream: 'stdout' | 'stderr', text: string) => { stream: LogStream; text: string }[];
-  summarize?: () => { result?: string; error?: string };
+  summarize?: () => { result?: string; error?: string; usage?: TaskUsage };
 }
 interface Owned { child: ChildProcess; done: Promise<TaskRecord>; resolve: (t: TaskRecord)=>void; timeout?: NodeJS.Timeout; escalation?: NodeJS.Timeout; stopPromise?: Promise<TaskRecord>; reason?: 'stopped' | 'timed_out'; bytes: number; memory: number; seq: number; finished: boolean; pending?: { stream: LogStream; text: string }; flush?: NodeJS.Timeout }
 /** Streamed output is coalesced so token-sized deltas become readable entries and disk writes/redraws stay bounded. */
@@ -40,7 +40,7 @@ export class TaskManager {
     if(!spec.title.trim() || !spec.executable || !spec.cwd) throw new Error('Task title, executable and cwd are required');
     if(spec.timeoutMs !== undefined && (!Number.isFinite(spec.timeoutMs)||spec.timeoutMs<0)) throw new Error('Invalid timeout');
     for(const old of this.list().filter(t=>!activeTask(t)).slice(0,Math.max(0,this.tasks.size-49))) {
-      this.tasks.delete(old.id); this.owned.delete(old.id); try{unlinkSync(old.logPath);}catch{}
+      this.tasks.delete(old.id); this.owned.delete(old.id); try{unlinkSync(old.logPath);}catch{} if(old.resultPath)try{unlinkSync(old.resultPath);}catch{}
     }
     const id=randomUUID(); const logPath=join(this.options.logDir,`${id}.jsonl`);
     writeFileSync(logPath,'',{flag:'wx',mode:0o600});
@@ -58,9 +58,11 @@ export class TaskManager {
       clearTimeout(owned.timeout);
       // Escalation stays armed after leader exit: descendants may ignore TERM.
       if(!owned.reason) clearTimeout(owned.escalation);
-      let summary:{result?:string;error?:string}={};
+      let summary:{result?:string;error?:string;usage?:TaskUsage}={};
       try{summary=spec.summarize?.() ?? {};}catch(error:any){summary.error=error.message;}
-      task.result=summary.result?.slice(-24000);task.error=task.error || summary.error;
+      task.result=summary.result?.slice(-24000);task.error=task.error || summary.error;task.usage=summary.usage;
+      // Keep the final answer as a readable file next to the JSONL log for later reference.
+      if(task.result){const path=task.logPath.replace(/\.jsonl$/,'.result.md');try{writeFileSync(path,task.result.endsWith('\n')?task.result:task.result+'\n',{mode:0o600});task.resultPath=path;}catch{}}
       task.status=owned.reason ?? (code===0&&!task.error?'completed':'failed');
       task.exitCode=code;task.endedAt=Date.now();
       if(signal&&!owned.reason&&!task.error) task.error=`Process exited on ${signal}`;
@@ -113,6 +115,15 @@ export class TaskManager {
       if(!task.diskTruncated){const line=JSON.stringify(entry)+'\n';const bytes=Buffer.byteLength(line);if(owned.bytes+bytes>this.maxLogBytes)task.diskTruncated=true;
         else try{appendFileSync(task.logPath,line);owned.bytes+=bytes;}catch(error:any){task.diskTruncated=true;task.error=`Log persistence failed: ${error.message}`;}}
     }
+  }
+  /** Wait for a task to finish without stopping it; resolves timedOut=true if the deadline or abort comes first. */
+  async wait(id:string,timeoutMs:number,signal?:AbortSignal):Promise<{task:TaskRecord;timedOut:boolean}>{
+    const task=this.tasks.get(id);if(!task)throw new Error('Unknown task ID in this session');
+    const owned=this.owned.get(id);if(!owned||owned.finished||!activeTask(task))return {task,timedOut:false};
+    let timer:NodeJS.Timeout|undefined;let onAbort:(()=>void)|undefined;
+    const deadline=new Promise<'timeout'>(resolve=>{timer=setTimeout(()=>resolve('timeout'),Math.max(0,timeoutMs));onAbort=()=>resolve('timeout');signal?.addEventListener('abort',onAbort,{once:true});});
+    try{const winner=await Promise.race([owned.done,deadline]);return {task,timedOut:winner==='timeout'};}
+    finally{clearTimeout(timer);if(onAbort)signal?.removeEventListener('abort',onAbort);}
   }
   async stop(id:string):Promise<TaskRecord> { return this.stopWithReason(id,'stopped'); }
   private async stopWithReason(id:string,reason:'stopped'|'timed_out'):Promise<TaskRecord>{

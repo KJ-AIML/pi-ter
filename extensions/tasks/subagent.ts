@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { getPackageDir } from '@earendil-works/pi-coding-agent';
 import { join, basename } from 'node:path';
 import type { LaunchSpec } from './manager.ts';
-import type { LogStream } from './types.ts';
+import type { LogStream, TaskUsage } from './types.ts';
 type Entry = { stream: LogStream; text: string };
 const contentText = (content: any): string => Array.isArray(content) ? content.filter(p=>p?.type==='text').map(p=>p.text||'').join('\n') : typeof content==='string'?content:'';
 
@@ -10,6 +10,13 @@ const contentText = (content: any): string => Array.isArray(content) ? content.f
 export class AgentOutput {
   private buffer=''; private overflow=false; private error?:string; private result=''; private streamed=false;
   private toolText=new Map<string,string>();
+  private usage:TaskUsage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:0,turns:0};
+  private addUsage(u:any){
+    const n=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:0;
+    this.usage.turns++;if(!u||typeof u!=='object')return;
+    this.usage.input+=n(u.input);this.usage.output+=n(u.output);this.usage.cacheRead+=n(u.cacheRead);this.usage.cacheWrite+=n(u.cacheWrite);
+    this.usage.totalTokens+=n(u.totalTokens);this.usage.cost+=n(u.cost?.total);
+  }
   consume(stream:'stdout'|'stderr',text:string):Entry[]{
     if(stream==='stderr') return [{stream,text}];
     const out:Entry[]=[];
@@ -41,6 +48,7 @@ export class AgentOutput {
       return [{stream:'tool',text:`${text.startsWith(previous)?text.slice(previous.length):text}\n${e.isError?'✗':'✓'} ${e.toolName}\n`}];
     }
     if(e.type==='message_end'&&e.message?.role==='assistant'){
+      this.addUsage(e.message.usage);
       const text=contentText(e.message.content);if(text)this.result=text.slice(-24000);
       if(e.message.stopReason==='error'||e.message.stopReason==='aborted')this.error=e.message.errorMessage||`Subagent ${e.message.stopReason}`;
       return [...(!this.streamed&&text?[{stream:'agent' as const,text}]:[]),...(this.error?[{stream:'system' as const,text:this.error}]:[])];
@@ -48,9 +56,9 @@ export class AgentOutput {
     if(e.type==='error'){this.error=String(e.message||e.error||'Subagent error');return [{stream:'system',text:this.error}];}
     return [];
   }
-  summary():{result?:string;error?:string}{
+  summary():{result?:string;error?:string;usage?:TaskUsage}{
     if(this.buffer.trim()){this.decode(this.buffer);this.buffer='';}
-    return {result:this.result||undefined,error:this.error||(!this.result?'Subagent exited without an assistant result; inspect stderr and provider configuration.':undefined)};
+    return {usage:this.usage.turns?{...this.usage}:undefined,result:this.result||undefined,error:this.error||(!this.result?'Subagent exited without an assistant result; inspect stderr and provider configuration.':undefined)};
   }
 }
 
