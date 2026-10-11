@@ -7,7 +7,8 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { basename } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { awakeController } from "./awake.ts";
 import { THEME, accent, bold, faint, muted, rgb, text } from "./theme.ts";
 
@@ -54,6 +55,7 @@ export class CustomStatusBar {
   private enabled = true;
   private gitChangedCount = 0;
   private gitBranchFallback = "";
+  private heliTargetRepo = "";
   private lastGitCheck = 0;
   private currentTui: any = null;
   // Renders run every spinner frame; only re-sum usage when the branch actually changes.
@@ -69,19 +71,62 @@ export class CustomStatusBar {
   /**
    * Check git dirty/changed files and branch (with target fallback)
    */
-  public async refreshGitStatus(): Promise<void> {
+  public async refreshGitStatus(cwd?: string, force = false): Promise<void> {
     const now = Date.now();
     // Cache git status for 2.5 seconds
-    if (now - this.lastGitCheck < 2500) return;
+    if (!force && now - this.lastGitCheck < 2500) return;
     this.lastGitCheck = now;
 
+    const baseDir = cwd || process.cwd();
+
+    // Check if we are inside a Heli workspace with an active or configured target
+    let targetRepo = "";
+    let targetDir = "";
     try {
-      // Only the session's own cwd; outside a git repo there is nothing to show.
-      const res = await this.pi.exec("git", ["status", "--porcelain"], { timeout: 2000 });
+      let cur = baseDir;
+      let wsPath = "";
+      while (cur) {
+        const candidate = resolve(cur, ".heli", "workspace.json");
+        if (existsSync(candidate)) {
+          wsPath = candidate;
+          break;
+        }
+        const parent = resolve(cur, "..");
+        if (parent === cur) break;
+        cur = parent;
+      }
+
+      if (wsPath) {
+        // Fast file read of .heli/workspace.json
+        const wsData = JSON.parse(readFileSync(wsPath, "utf-8"));
+        // Query heli target to see active target repo
+        const targetRes = await this.pi.exec("heli", ["target", "--json"], { timeout: 1500 });
+        if (targetRes && targetRes.code === 0 && targetRes.stdout) {
+          try {
+            const parsed = JSON.parse(targetRes.stdout);
+            const data = parsed.data || parsed;
+            if (data.targetRepo && data.targetRepo !== "none" && data.targetGitRoot) {
+              targetRepo = data.targetRepo;
+              targetDir = resolve(cur, data.targetGitRoot);
+            }
+          } catch {
+            // ignore JSON parse error
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    this.heliTargetRepo = targetRepo;
+
+    try {
+      const gitArgs = targetDir ? ["-C", targetDir] : [];
+      const res = await this.pi.exec("git", [...gitArgs, "status", "--porcelain"], { timeout: 2000 });
       if (res && res.code === 0 && typeof res.stdout === "string") {
         const lines = res.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
         this.gitChangedCount = lines.length;
-        const bRes = await this.pi.exec("git", ["branch", "--show-current"], { timeout: 1500 });
+        const bRes = await this.pi.exec("git", [...gitArgs, "branch", "--show-current"], { timeout: 1500 });
         this.gitBranchFallback = bRes && bRes.code === 0 ? bRes.stdout.trim() : "";
       } else {
         this.gitChangedCount = 0;
@@ -102,12 +147,12 @@ export class CustomStatusBar {
   public attach(ctx: ExtensionContext): void {
     if (!ctx.hasUI || ctx.mode !== "tui") return;
 
-    void this.refreshGitStatus();
+    void this.refreshGitStatus(ctx.cwd);
 
     ctx.ui.setFooter((tui, _theme, footerData) => {
       this.currentTui = tui;
       const unsubBranch = footerData.onBranchChange(() => {
-        void this.refreshGitStatus();
+        void this.refreshGitStatus(ctx.cwd);
         tui.requestRender();
       });
 
@@ -161,10 +206,11 @@ export class CustomStatusBar {
     // Folder
     const segFolder = text(basename(ctx.cwd || process.cwd()));
 
-    // Git branch + changed-file count
-    const rawBranch = footerData.getGitBranch();
+    // Git branch + changed-file count (with target repo prefix when in Heli multi-repo)
+    const rawBranch = this.heliTargetRepo ? "" : footerData.getGitBranch();
     const branch = rawBranch && rawBranch !== "no-git" ? rawBranch : (this.gitBranchFallback || "no-git");
-    const segGit = muted(branch) + (this.gitChangedCount > 0 ? ` ${text(`+${this.gitChangedCount}`)}` : "");
+    const branchLabel = this.heliTargetRepo && branch !== "no-git" ? `${this.heliTargetRepo}:${branch}` : branch;
+    const segGit = muted(branchLabel) + (this.gitChangedCount > 0 ? ` ${text(`+${this.gitChangedCount}`)}` : "");
 
     // Tokens: active context tokens vs context window, plus cumulative session total
     const sessionBranch = ctx.sessionManager.getBranch();

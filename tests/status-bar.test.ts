@@ -32,3 +32,42 @@ test('usage is re-summed only when the session branch changes', () => {
   assert.equal(h.reads(), first, 'spinner redraws do not rescan the session');
   h.branch.push(h.entry(30)); assert.match(h.render(), /total 63/); assert.ok(h.reads() > first);
 });
+
+test('Heli workspace target displays targetRepo:branch format', async () => {
+  let footer: any;
+  const calls: { cmd: string; args: string[] }[] = [];
+  const pi: any = {
+    exec: async (cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      if (cmd === 'heli') {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            ok: true,
+            data: { targetRepo: 'tbuddy', targetGitRoot: 'repos/tbuddy' }
+          })
+        };
+      }
+      if (cmd === 'git') {
+        if (args.includes('status')) return { code: 0, stdout: ' M package.json\n' };
+        if (args.includes('branch')) return { code: 0, stdout: 'feat/pair\n' };
+      }
+      return { code: 0, stdout: '' };
+    }
+  };
+  const ctx: any = {
+    hasUI: true,
+    mode: 'tui',
+    cwd: process.cwd(), // has .heli/workspace.json
+    model: { id: 'm', contextWindow: 1000 },
+    sessionManager: { getBranch: () => [] },
+    ui: { setFooter: (f: any) => { footer = f({ requestRender() {} }, {}, { onBranchChange: () => () => {}, getGitBranch: () => 'no-git' }); } }
+  };
+  const bar = new CustomStatusBar(pi);
+  bar.attach(ctx);
+  await bar.refreshGitStatus(ctx.cwd, true);
+  const rendered = footer.render(200).join('');
+  assert.match(rendered, /tbuddy:feat\/pair/);
+  assert.match(rendered, /\+1/);
+});
+
