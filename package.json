@@ -1,9 +1,12 @@
 {
   "name": "pi-ter",
   "version": "0.1.0",
-  "description": "Pi experimentation plugin package for custom extensions, skills, and prompts",
+  "description": "Custom extensions, tools warehouse, subagent supervisor, and workspace enhancements for Pi",
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "subagent",
+    "tools-warehouse",
+    "extensions"
   ],
   "type": "module",
   "main": "extensions/index.ts",

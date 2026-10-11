@@ -1,7 +1,13 @@
-# pi-ter
+# pi-ter 🧰⚡
 
-A Pi extension package with a Hello PI hands intro, a Workspace welcome screen,
-a custom status bar, and `/fire` keep-awake mode.
+Your personal warehouse of custom extensions, tools, subagent supervision, and workspace enhancements for the Pi Coding Agent.
+
+Features:
+- **Subagents & Background Tasks Supervisor (`/tasks`, `F6`):** Launch bounded child Pi agents (`piter_agent`) with isolated worktrees or read-only roles, run long-lived terminal processes (`piter_terminal`), view live logs in an interactive full-screen card, and steer child runs remotely.
+- **Custom Status Bar:** Minimal monochrome footer with model context limit, session totals, cache hit-rate, execution mode, and active Heli multi-repo target integration (`targetRepo:branch +dirty`).
+- **Hello PI Splash & Workspace Welcome:** Beveled Braille wordmark, inventory grouping, and quick navigation.
+- **Keep-Awake (`/fire`):** Prevents sleep during long agent execution runs.
+- **Skills & Tool Warehouse:** Central hub for custom extensions, skills, and prompt templates.
 
 ## Run
 
