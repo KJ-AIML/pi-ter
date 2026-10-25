@@ -4,7 +4,9 @@
  * Colors come from the active Pi theme, so piter-mono (or any theme) applies.
  */
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { Text, truncateToWidth } from '@earendil-works/pi-tui';
+import type { Component, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
+import { Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { copyToClipboard } from './tasks/clipboard.ts';
 
 const MAX_SUBJECT = 60;
 
@@ -17,6 +19,13 @@ export function subjectOf(input: unknown): string {
   const key = SUBJECT_KEYS.find(k => typeof f[k] === 'string' && f[k] !== '');
   const raw = key !== undefined ? String(f[key]) : Object.keys(f).length ? JSON.stringify(f) : '';
   return raw.replace(/\s+/g, ' ').trim();
+}
+
+export function rawSubjectOf(input: unknown): string {
+  if (typeof input !== 'object' || input === null) return '';
+  const f = input as Record<string, unknown>;
+  const key = SUBJECT_KEYS.find(k => typeof f[k] === 'string' && f[k] !== '');
+  return key !== undefined ? String(f[key]) : subjectOf(input);
 }
 
 export function clip(text: string, room: number): string {
@@ -35,6 +44,81 @@ export function lineParts(tool: string, args: unknown, isError: boolean) {
 const textOf = (result: any): string =>
   (result?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n').trim();
 
+type CopyState = 'idle' | 'copied' | 'failed';
+
+class ToolLine implements Component {
+  private tool = '';
+  private subject = '';
+  private meta = '';
+  private copyText = '';
+  private dot = '';
+  private theme: any;
+  private state: CopyState = 'idle';
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private hit: { start: number; end: number } | undefined;
+  private readonly requestRender: () => void;
+
+  constructor(requestRender: () => void) {
+    this.requestRender = requestRender;
+  }
+
+  update(tool: string, subject: string, meta: string, copyText: string, dot: string, theme: any): void {
+    this.tool = tool;
+    this.subject = subject;
+    this.meta = meta;
+    this.copyText = copyText;
+    this.dot = dot;
+    this.theme = theme;
+  }
+
+  private labelText(): string {
+    if (this.state === 'copied') return this.theme.fg('success', '[copied]');
+    if (this.state === 'failed') return this.theme.fg('error', '[copy failed]');
+    return this.theme.fg('dim', '[copy]');
+  }
+
+  private lineText(): string {
+    const meta = this.meta ? ' ' + this.theme.fg('error', `- ${this.meta}`) : '';
+    return `${this.dot} ${this.theme.fg('dim', 'tool_call: ')}${this.theme.fg('toolTitle', this.theme.bold(this.tool))}${this.theme.fg('text', `(${this.subject})`)}${meta}`;
+  }
+
+  render(width: number): string[] {
+    const prefix = this.lineText();
+    const labelText = this.labelText();
+    const full = ' ' + prefix + ' ' + labelText;
+    if (width > 0 && visibleWidth(full) <= width) {
+      const start = 1 + visibleWidth(prefix) + 1;
+      this.hit = { start, end: start + visibleWidth(labelText) - 1 };
+      return [full];
+    }
+    this.hit = undefined;
+    return [truncateToWidth(' ' + prefix, width, '…')];
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== 'click' || event.button !== 'left' || event.y !== 0) return undefined;
+    const hit = this.hit;
+    if (!hit || event.x < hit.start || event.x > hit.end || !this.copyText) return undefined;
+    void copyToClipboard(this.copyText)
+      .then(() => this.flash('copied'))
+      .catch(() => this.flash('failed'));
+    return { handled: true };
+  }
+
+  private flash(state: CopyState): void {
+    this.state = state;
+    this.requestRender();
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.state = 'idle';
+      this.requestRender();
+    }, 1400);
+    this.timer.unref?.();
+  }
+
+  invalidate(): void {}
+}
+
 export function registerToolLines(pi: ExtensionAPI): void {
   // registerToolRenderer exists from Pi 1.x; older Pi (e.g. 0.85.1) keeps its built-in rows.
   const api = pi as unknown as { registerToolRenderer?: (r: (toolName: string, next: () => any) => any) => void };
@@ -49,9 +133,9 @@ export function registerToolLines(pi: ExtensionAPI): void {
         const p = lineParts(toolName, args, !!ctx.isError);
         // tool-lines style: white dot, dim "tool_call:" prefix, bold tool name, plain subject.
         const dot = ctx.isError ? theme.fg('error', '●') : done ? theme.fg('text', '●') : theme.fg('warning', '●');
-        const meta = p.meta ? ' ' + theme.fg('error', `- ${p.meta}`) : '';
-        const line = `${dot} ${theme.fg('dim', 'tool_call: ')}${theme.fg('toolTitle', theme.bold(p.tool))}${theme.fg('text', `(${p.subject})`)}${meta}`;
-        return { render: (w: number) => [truncateToWidth(' ' + line, w, '…')], invalidate() {} } as any;
+        const line = ctx.lastComponent instanceof ToolLine ? ctx.lastComponent : new ToolLine(() => ctx.invalidate());
+        line.update(p.tool, p.subject, p.meta, rawSubjectOf(args), dot, theme);
+        return line as any;
       },
       renderResult(result: any, opts: any, theme: any, ctx: any) {
         if (opts.isPartial) return new Text('', 0, 0);

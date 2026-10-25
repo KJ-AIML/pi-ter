@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerTasks } from "./tasks/index.ts";
 import { registerToolLines } from "./tool-lines.ts";
+import { installCodeCopy, setCodeCopyRenderer, setCodeCopyTheme } from "./code-copy.ts";
 import { styleReply } from "./sentences.ts";
 import { awakeController } from "./awake.ts";
 import { CleanHeader } from "./clean-header.ts";
@@ -12,6 +13,7 @@ export default function (pi: ExtensionAPI) {
   registerBlackjack(pi);
   // Compact one-line tool rows and one-sentence-per-line replies (opt out: PITER_PLAIN_TOOLS=1 / PITER_PLAIN_REPLIES=1).
   if (process.env.PITER_PLAIN_TOOLS !== "1") registerToolLines(pi);
+  installCodeCopy();
   const markdownApi = pi as unknown as { registerMarkdownTransformer?: (t: (md: string, ctx: { messageType: string }) => string) => void };
   if (process.env.PITER_PLAIN_REPLIES !== "1" && typeof markdownApi.registerMarkdownTransformer === "function") {
     markdownApi.registerMarkdownTransformer((markdown, ctx) => ctx.messageType === "assistant" ? styleReply(markdown) : markdown);
@@ -21,8 +23,10 @@ export default function (pi: ExtensionAPI) {
 
   // Attach clean header and status bar on session start
   pi.on("session_start", async (_event, ctx) => {
+    setCodeCopyTheme(() => ctx.ui.theme as any);
     cleanHeader.attach(ctx);
     statusBar.attach(ctx);
+    setCodeCopyRenderer(() => statusBar.requestRender());
     cleanHeader.startSplash();
     const ui = ctx.ui as unknown as { setWorkingIndicator?: (o: { frames: string[]; intervalMs?: number }) => void };
     const frames = ["♠", "♥", "♦", "♣"].map(f => `\x1b[38;2;184;168;240m${f}\x1b[39m`);

@@ -35,35 +35,19 @@ export function splitLine(line: string): string {
   return out;
 }
 
-/** Drop Pi's ``` fence chrome. A short label plus a gutter stays readable and is not a code token. */
-export function formatFences(markdown: string): string {
-  const lines = markdown.split('\n');
-  const out: string[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const open = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)[ \t]*$/.exec(lines[i] ?? '');
-    if (!open) { out.push(lines[i] ?? ''); i++; continue; }
-    const marker = open[1][0];
-    const close = new RegExp(`^ {0,3}${marker}{${open[1].length},}[ \t]*$`);
-    const body: string[] = [];
-    i++;
-    while (i < lines.length && !close.test(lines[i] ?? '')) { body.push(lines[i] ?? ''); i++; }
-    if (i < lines.length) i++;
-    const label = open[2] || 'code';
-    // No gutter. A copied selection must be the command itself, safe to paste into a shell.
-    const show = (line: string) => {
-      if (line === '') return '  ';
-      const ticks = '`'.repeat((line.match(/`+/g) ?? []).reduce((n, s) => Math.max(n, s.length), 0) + 1);
-      const pad = ticks.length > 1 ? ' ' : '';
-      return `${ticks}${pad}${line}${pad}${ticks}  `;
-    };
-    out.push(`**${label}**`, ...body.map(show), '');
-  }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+/** Turn top-level h1 lines into inline-code banners without touching fenced code. */
+export function formatHeadings(markdown: string): string {
+  let fence: string | undefined;
+  return markdown.split('\n').map(line => {
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (m) { fence = fence === undefined ? m[1][0] : fence === m[1][0] ? undefined : fence; return line; }
+    if (fence !== undefined) return line;
+    return /^# .+$/.test(line) ? '`' + line + ' `' : line;
+  }).join('\n');
 }
 
 export function styleReply(markdown: string): string {
-  return formatFences(splitSentences(markdown)).replace(/^(# .+)$/gm, (_, h) => '`' + h + ' `');
+  return formatHeadings(splitSentences(markdown));
 }
 
 export function splitSentences(markdown: string): string {

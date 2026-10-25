@@ -5,6 +5,7 @@ Your personal warehouse of custom extensions, tools, subagent supervision, and w
 Features:
 - **Subagents & Background Tasks Supervisor (`/tasks`, `F6`):** Launch bounded child Pi agents (`piter_agent`) with isolated worktrees or read-only roles, run long-lived terminal processes (`piter_terminal`), view live logs in an interactive full-screen card, and steer child runs remotely.
 - **Custom Status Bar:** Minimal monochrome footer with model context limit, session totals, cache hit-rate, execution mode, and active Heli multi-repo target integration (`targetRepo:branch +dirty`).
+- **Compact Tool Rows & Code Copy:** One-line tool calls show an inline `[copy]`; code blocks render as a compact language-headed card with a right-aligned `[copy]` for the source (tool rows need Pi 1.x; older Pi keeps its built-in rows).
 - **Hello PI Splash & Workspace Welcome:** Beveled Braille wordmark, inventory grouping, and quick navigation.
 - **Keep-Awake (`/fire`):** Prevents sleep during long agent execution runs.
 - **Skills & Tool Warehouse:** Central hub for custom extensions, skills, and prompt templates.

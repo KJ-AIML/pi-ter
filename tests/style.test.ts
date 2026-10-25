@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitSentences, splitLine, styleReply, formatFences } from '../extensions/sentences.ts';
-import { lineParts, subjectOf, clip } from '../extensions/tool-lines.ts';
+import { splitSentences, splitLine, styleReply, formatHeadings } from '../extensions/sentences.ts';
+import { lineParts, rawSubjectOf, subjectOf, clip } from '../extensions/tool-lines.ts';
 
 test('splits prose into one sentence per line', () => {
   assert.equal(splitLine('First one. Second one! Third?'), 'First one.  \nSecond one!  \nThird?');
@@ -20,18 +20,26 @@ test('tool line subject', () => {
   assert.equal(clip('abcdef', 4), 'abc…');
   const p = lineParts('read', { path: '/Users/me/x.ts' }, true);
   assert.deepEqual(p, { tool: 'read', subject: '~/x.ts', meta: 'error' });
+  assert.equal(rawSubjectOf({ path: '/Users/me/x.ts' }), '/Users/me/x.ts');
+  assert.equal(rawSubjectOf({ command: 'echo a\necho b' }), 'echo a\necho b');
+  assert.equal(rawSubjectOf({ nothing: 1 }), '{"nothing":1}');
 });
 
 test('h1 becomes an inline-code banner, other headings stay', () => {
   assert.equal(styleReply('# Title\n\n## Sub\n\nHello. World'), '`# Title `\n\n## Sub\n\nHello.  \nWorld');
 });
 
-test('fences lose backtick chrome and keep one line per command', () => {
+test('keeps fenced code blocks for highlighted rendering', () => {
   const md = 'Run this.\n\n```bash\ncd repo\npnpm test\n```\n\nDone.';
   const out = styleReply(md);
-  assert.doesNotMatch(out, /```/);
-  assert.match(out, /\*\*bash\*\*/);
-  assert.match(out, /`cd repo`/);
-  assert.match(out, /`pnpm test`/);
+  assert.match(out, /```bash\ncd repo\npnpm test\n```/);
+  assert.match(out, /Run this\./);
+  assert.match(out, /Done\./);
+});
+
+test('headings inside code blocks are not turned into banners', () => {
+  const md = '# Title\n\n```sh\n# a comment\n```';
+  const out = formatHeadings(md);
+  assert.equal(out, '`# Title `\n\n```sh\n# a comment\n```');
 });
 
